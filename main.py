@@ -133,7 +133,28 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
     </div>
     <div style="height:12px"></div>
     <button class="primary" onclick="login()">관리자 로그인</button>
+    <button style="background:transparent;color:var(--blue);padding:10px 0 0" onclick="openForgot()">비밀번호를 잊으셨나요?</button>
     <div id="loginMsg" class="msg"></div>
+
+    <div id="forgotBox" class="hidden" style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
+      <div class="section-title">관리자 비밀번호 찾기</div>
+      <div class="small" style="margin-bottom:10px">학원 등록 시 입력한 최초 관리자 성함과 전화번호 끝 4자리를 입력해주세요.</div>
+      <div class="grid">
+        <input id="recoveryName" placeholder="최초 관리자 성함">
+        <input id="recoveryPhone" maxlength="4" inputmode="numeric" placeholder="전화번호 끝 4자리">
+      </div>
+      <div style="height:10px"></div>
+      <button class="secondary" onclick="verifyRecovery()">본인 확인</button>
+      <div id="resetBox" class="hidden" style="margin-top:12px">
+        <div class="grid">
+          <input id="resetPassword" type="password" placeholder="새 관리자 비밀번호">
+          <input id="resetPassword2" type="password" placeholder="새 관리자 비밀번호 확인">
+        </div>
+        <div style="height:10px"></div>
+        <button class="primary" onclick="resetPasswordNow()">비밀번호 재설정</button>
+      </div>
+      <div id="forgotMsg" class="msg"></div>
+    </div>
   </div>
 
   <div id="admin" class="hidden">
@@ -195,6 +216,11 @@ $("academyQ").oninput=async()=>{const q=$("academyQ").value.trim();if(!q)return 
 async function loadAcademies(){const r=$("region").value,d=$("district").value;if(!r||!d)return;const xs=await api(`/api/v3/academies?region=${encodeURIComponent(r)}&district=${encodeURIComponent(d)}`);$("academy").innerHTML='<option value="">학원</option>'+xs.map(a=>`<option value="${a.id}" data-name="${esc(a.name)}">${esc(a.name)}</option>`).join("")}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";loadStudents()}catch(e){$("loginMsg").textContent=e.message}}
+let recoveryToken="";
+function openForgot(){const id=Number($("academy").value);if(!id){$("loginMsg").textContent="학원을 먼저 선택해주세요.";return;}$("loginMsg").textContent="";$("forgotBox").classList.toggle("hidden");}
+async function verifyRecovery(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 먼저 선택해주세요.");const name=$("recoveryName").value.trim();const phone=$("recoveryPhone").value.trim();if(!name)throw new Error("최초 관리자 성함을 입력해주세요.");if(!/^\d{4}$/.test(phone))throw new Error("전화번호 끝 4자리를 입력해주세요.");const d=await api("/api/v3/admin/recovery/verify",{method:"POST",body:JSON.stringify({academy_id:id,recovery_name:name,recovery_phone_last4:phone})});recoveryToken=d.recovery_token;$("resetBox").classList.remove("hidden");$("forgotMsg").textContent="본인 확인이 완료되었습니다.";$("forgotMsg").className="msg ok"}catch(e){$("forgotMsg").textContent=e.message;$("forgotMsg").className="msg"}}
+async function resetPasswordNow(){try{if(!recoveryToken)throw new Error("먼저 본인 확인을 해주세요.");const p=$("resetPassword").value,p2=$("resetPassword2").value;if(p.length<4)throw new Error("새 비밀번호는 4자리 이상 입력해주세요.");if(p!==p2)throw new Error("새 비밀번호가 일치하지 않습니다.");await api("/api/v3/admin/recovery/reset",{method:"POST",body:JSON.stringify({recovery_token:recoveryToken,new_password:p})});$("forgotMsg").textContent="관리자 비밀번호가 변경되었습니다.";$("forgotMsg").className="msg ok";recoveryToken="";$("resetBox").classList.add("hidden");$("password").value=""}catch(e){$("forgotMsg").textContent=e.message;$("forgotMsg").className="msg"}}
+
 function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
 function showTab(t){for(const x of ["students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
 async function loadStudents(){if(!token)return;try{const q=$("studentQ").value.trim();const xs=await api("/api/v3/admin/students?q="+encodeURIComponent(q));$("studentsBody").innerHTML=xs.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone_last4)}</td><td>${esc(s.attendance_pin)}</td><td>${esc(s.memo)}</td><td>${s.nfc_registered?'<span class="pill">등록</span>':'-'}</td><td><button class="danger" onclick="removeStudent(${s.student_id})">퇴원</button></td></tr>`).join("")}catch(e){alert(e.message)}}
