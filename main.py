@@ -1,3 +1,4 @@
+from zoneinfo import ZoneInfo
 from datetime import datetime, timezone, timedelta
 from calendar import monthrange
 import secrets, random
@@ -12,7 +13,7 @@ from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEven
 from security import hash_password,verify_password,token,read_token
 from auth_adapter import verify_license_key,AuthUnavailable
 from push import send_push
-KST=timezone(timedelta(hours=9)); LOCKOUT_SECONDS=600
+KST=ZoneInfo("Asia/Seoul"); LOCKOUT_SECONDS=600
 app=FastAPI(title="CodeNote Attendance V3 API",version="3.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
 @app.on_event("startup")
@@ -197,7 +198,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
     <section id="attendancePanel" class="hidden">
       <div class="card">
         <div class="between"><div class="section-title">월별 출석현황</div><div class="row"><input id="month" type="month"><input id="attQ" placeholder="이름/전화 검색"><button class="secondary" onclick="loadAttendance()">조회</button></div></div>
-        <div class="tablewrap"><table><thead><tr><th>시간</th><th>학생</th><th>전화 뒤4</th><th>상태</th><th>방식</th></tr></thead><tbody id="attendanceBody"></tbody></table></div>
+        <div class="tablewrap"><table><thead><tr><th>시간</th><th>학생</th><th>전화 뒤4</th><th>상태</th><th>방식</th><th></th></tr></thead><tbody id="attendanceBody"></tbody></table></div>
       </div>
     </section>
 
@@ -312,7 +313,14 @@ async function saveManualAttendance(){try{
   const d=await api("/api/v3/admin/attendance/manual",{method:"POST",body:JSON.stringify({student_id:manualStudentId,event_type:$("manualType").value,occurred_at:dt.toISOString()})});
   $("manualMsg").textContent=d.message||"출석이 등록되었습니다.";$("manualMsg").className="msg ok";loadAttendance();
 }catch(e){$("manualMsg").textContent=e.message;$("manualMsg").className="msg"}}
-async function loadAttendance(){if(!token)return;try{const [y,m]=$("month").value.split("-");const q=$("attQ").value.trim();const xs=await api(`/api/v3/admin/attendance?year=${y}&month=${Number(m)}&q=${encodeURIComponent(q)}`);$("attendanceBody").innerHTML=xs.map(e=>`<tr><td>${new Date(e.occurred_at).toLocaleString("ko-KR")}</td><td>${esc(e.student_name)}</td><td>${esc(e.phone_last4)}</td><td>${e.event_type==="IN"?"입실":"퇴실"}</td><td>${esc(e.source)}</td></tr>`).join("")}catch(e){alert(e.message)}}
+async function loadAttendance(){if(!token)return;try{const [y,m]=$("month").value.split("-");const q=$("attQ").value.trim();const xs=await api(`/api/v3/admin/attendance?year=${y}&month=${Number(m)}&q=${encodeURIComponent(q)}`);$("attendanceBody").innerHTML=xs.map(e=>`<tr><td>${new Date(e.occurred_at).toLocaleString("ko-KR")}</td><td>${esc(e.student_name)}</td><td>${esc(e.phone_last4)}</td><td>${e.event_type==="IN"?"입실":"퇴실"}</td><td>${esc(e.source)}</td><td><button class="danger" onclick="deleteAttendance(${e.id})">삭제</button></td></tr>`).join("")}catch(e){alert(e.message)}}
+async function deleteAttendance(id){
+  if(!confirm("이 출석기록을 삭제하시겠습니까?"))return;
+  try{
+    await api("/api/v3/admin/attendance/"+id,{method:"DELETE"});
+    loadAttendance();
+  }catch(e){alert(e.message)}
+}
 async function changePassword(){try{await api("/api/v3/admin/password",{method:"POST",body:JSON.stringify({current_password:$("currentPw").value,new_password:$("newPw").value})});$("pwMsg").textContent="비밀번호가 변경되었습니다.";$("pwMsg").className="msg ok"}catch(e){$("pwMsg").textContent=e.message;$("pwMsg").className="msg"}}
 init().catch(e=>$("loginMsg").textContent=e.message);
 </script>
@@ -369,7 +377,7 @@ def prepare_student_nfc(student_id:int,auth=Depends(admin_auth),db:Session=Depen
     s=db.get(Student,student_id)
     if not sa or not s: raise HTTPException(404,"학생을 찾을 수 없습니다.")
     # 재발급을 시작하는 즉시 분실한 이전 카드를 서버에서 무효화합니다.
-    s.nfc_token=None; s.nfc_active=False; s.updated_at=datetime.now(timezone.utc); db.flush()
+    s.nfc_token=None; s.nfc_active=False; s.updated_at=now_kst().astimezone(timezone.utc); db.flush()
     while True:
         value="CN-"+secrets.token_urlsafe(32)
         if not db.scalar(select(Student.id).where(Student.nfc_token==value)): break
@@ -387,7 +395,7 @@ def confirm_student_nfc(student_id:int,r:NfcConfirm,auth=Depends(admin_auth),db:
     nt=str(p.get("nfc_token","")).strip()
     if not nt: raise HTTPException(400,"NFC 토큰이 없습니다.")
     if db.scalar(select(Student).where(Student.nfc_token==nt,Student.id!=student_id)): raise HTTPException(409,"이미 다른 학생에게 사용 중인 NFC 토큰입니다.")
-    s.nfc_token=nt; s.nfc_active=True; s.updated_at=datetime.now(timezone.utc); db.commit(); return {"ok":True,"nfc_registered":True}
+    s.nfc_token=nt; s.nfc_active=True; s.updated_at=now_kst().astimezone(timezone.utc); db.commit(); return {"ok":True,"nfc_registered":True}
 
 @app.post("/api/v3/admin/nfc/issue-token")
 def issue_nfc_token(auth=Depends(admin_auth),db:Session=Depends(get_db)):
@@ -438,7 +446,7 @@ def edit_student(student_id:int,r:EditStudent,auth=Depends(admin_auth),db:Sessio
     links=db.scalar(select(func.count()).select_from(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.is_active.is_(True))) or 0
     global_changed=(s.name!=r.name.strip() or s.phone_last4!=phone)
     if global_changed and links>1 and not r.confirm_global: raise HTTPException(409,"GLOBAL_CONFIRM_REQUIRED")
-    old_name,old_phone=s.name,s.phone_last4; s.name=r.name.strip(); s.phone_last4=phone; s.updated_at=datetime.now(timezone.utc); sa.attendance_pin=pin; sa.memo=r.memo.strip(); refresh_duplicate_codes(db,auth["academy_id"],old_name,old_phone); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit(); return {"ok":True,"global_updated":global_changed,"linked_academies":links}
+    old_name,old_phone=s.name,s.phone_last4; s.name=r.name.strip(); s.phone_last4=phone; s.updated_at=now_kst().astimezone(timezone.utc); sa.attendance_pin=pin; sa.memo=r.memo.strip(); refresh_duplicate_codes(db,auth["academy_id"],old_name,old_phone); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit(); return {"ok":True,"global_updated":global_changed,"linked_academies":links}
 @app.post("/api/v3/admin/students/{student_id}/replace-nfc")
 def replace_nfc(student_id:int,r:NfcReplace,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))); s=db.get(Student,student_id)
@@ -446,7 +454,7 @@ def replace_nfc(student_id:int,r:NfcReplace,auth=Depends(admin_auth),db:Session=
     nt=r.new_nfc_token.strip()
     if not nt: raise HTTPException(400,"새 NFC 토큰이 없습니다.")
     if db.scalar(select(Student).where(Student.nfc_token==nt,Student.id!=s.id)): raise HTTPException(409,"이미 다른 학생에게 등록된 NFC 카드입니다.")
-    s.nfc_token=nt; s.nfc_active=True; s.updated_at=datetime.now(timezone.utc); db.commit(); return {"ok":True}
+    s.nfc_token=nt; s.nfc_active=True; s.updated_at=now_kst().astimezone(timezone.utc); db.commit(); return {"ok":True}
 @app.delete("/api/v3/admin/students/{student_id}")
 def remove_from_academy(student_id:int,delete_global:bool=False,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))); s=db.get(Student,student_id)
@@ -471,16 +479,13 @@ def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=
     if not sa or not student:
         raise HTTPException(404,"이 학원에 등록된 학생이 아닙니다.")
 
-    occurred=r.occurred_at
-    if occurred.tzinfo is None:
-        occurred=occurred.replace(tzinfo=KST)
-    occurred=occurred.astimezone(timezone.utc)
+    occurred=to_utc(r.occurred_at)
 
-    now=datetime.now(timezone.utc)
+    now=now_kst().astimezone(timezone.utc)
     if occurred > now + timedelta(minutes=1):
         raise HTTPException(400,"미래 시간으로 출석을 등록할 수 없습니다.")
 
-    local=occurred.astimezone(KST)
+    local=to_kst(occurred)
     if local.minute not in (0,30):
         raise HTTPException(400,"출석 시간은 30분 단위로 등록해주세요.")
 
@@ -536,7 +541,7 @@ def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=
     return {
         "ok":True,
         "message":f"{student.name} 학생 {when} {action} 등록 완료 · 학부모 알림 즉시 전송",
-        "occurred_at":event.occurred_at.isoformat()
+        "occurred_at":to_kst(event.occurred_at).isoformat()
     }
 
 @app.post("/api/v3/attendance/check")
@@ -592,17 +597,17 @@ def attendance(r:AttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_d
         if not row: raise HTTPException(404,"등록된 출석번호가 아닙니다.")
         sa,s=row; source="PIN"
     if not sa: raise HTTPException(403,"이 학원에 등록되지 않은 학생입니다.")
-    now=datetime.now(timezone.utc); last=db.scalar(select(AttendanceEvent).where(AttendanceEvent.student_id==s.id,AttendanceEvent.academy_id==auth["academy_id"]).order_by(AttendanceEvent.occurred_at.desc()).limit(1))
+    now=now_kst().astimezone(timezone.utc); last=db.scalar(select(AttendanceEvent).where(AttendanceEvent.student_id==s.id,AttendanceEvent.academy_id==auth["academy_id"]).order_by(AttendanceEvent.occurred_at.desc()).limit(1))
     if last:
         sec=(now-last.occurred_at).total_seconds()
         if sec<LOCKOUT_SECONDS: raise HTTPException(409,f"DUPLICATE_WAIT:{max(1,int((LOCKOUT_SECONDS-sec+59)//60))}")
         typ="OUT" if last.event_type=="IN" else "IN"
     else: typ="IN"
     e=AttendanceEvent(academy_id=auth["academy_id"],student_id=s.id,student_academy_id=sa.id,event_type=typ,source=source,occurred_at=now); db.add(e); db.commit(); db.refresh(e)
-    a=db.get(Academy,auth["academy_id"]); action="입실" if typ=="IN" else "퇴실"; when=e.occurred_at.astimezone(KST).strftime("%H:%M")
+    a=db.get(Academy,auth["academy_id"]); action="입실" if typ=="IN" else "퇴실"; when=to_kst(e.occurred_at).strftime("%H:%M")
     tokens=list(db.scalars(select(ParentDevice.push_token).join(ParentLink,ParentLink.device_id==ParentDevice.id).where(ParentLink.student_id==s.id,ParentLink.academy_id==a.id,ParentDevice.push_token.is_not(None))).all())
     send_push(tokens,a.name,f"{s.name} 학생이 {when} {action}했습니다.",{"student_id":str(s.id),"academy_id":str(a.id),"event_type":typ})
-    return {"ok":True,"student_id":s.id,"student_name":s.name,"event_type":typ,"source":source,"occurred_at":e.occurred_at.isoformat(),"lockout_minutes":10}
+    return {"ok":True,"student_id":s.id,"student_name":s.name,"event_type":typ,"source":source,"occurred_at":to_kst(e.occurred_at).isoformat(),"lockout_minutes":10}
 
 @app.post("/api/v3/parent/login")
 def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
@@ -616,7 +621,7 @@ def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
     sa,s=rows[0]
     d=db.scalar(select(ParentDevice).where(ParentDevice.installation_id==r.installation_id,ParentDevice.platform==r.platform))
     if not d: d=ParentDevice(installation_id=r.installation_id,platform=r.platform,push_token=r.push_token); db.add(d); db.flush()
-    else: d.push_token=r.push_token or d.push_token; d.updated_at=datetime.now(timezone.utc)
+    else: d.push_token=r.push_token or d.push_token; d.updated_at=now_kst().astimezone(timezone.utc)
     academy_ids=list(db.scalars(select(StudentAcademy.academy_id).where(StudentAcademy.student_id==s.id,StudentAcademy.is_active.is_(True))).all())
     for aid in academy_ids:
         if not db.scalar(select(ParentLink).where(ParentLink.device_id==d.id,ParentLink.student_id==s.id,ParentLink.academy_id==aid)):
@@ -629,7 +634,7 @@ def update_parent_push_token(r:PushTokenReq,auth=Depends(parent_auth),db:Session
     value=r.push_token.strip()
     if not value: raise HTTPException(400,"푸시 토큰이 없습니다.")
     d.push_token=value
-    d.updated_at=datetime.now(timezone.utc)
+    d.updated_at=now_kst().astimezone(timezone.utc)
     db.commit()
     return {"ok":True}
 
@@ -644,12 +649,21 @@ def month_bounds(y,m):
 def parent_attendance(year:int,month:int,auth=Depends(parent_auth),db:Session=Depends(get_db)):
     start,end=month_bounds(year,month); permitted=select(ParentLink.student_id).where(ParentLink.device_id==auth["device_id"])
     rows=db.execute(select(AttendanceEvent,Student,Academy).join(Student,Student.id==AttendanceEvent.student_id).join(Academy,Academy.id==AttendanceEvent.academy_id).where(AttendanceEvent.student_id.in_(permitted),AttendanceEvent.occurred_at>=start,AttendanceEvent.occurred_at<end).order_by(AttendanceEvent.occurred_at)).all()
-    return [{"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name,"event_type":e.event_type,"occurred_at":e.occurred_at.isoformat()} for e,s,a in rows]
+    return [{"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name,"event_type":e.event_type,"occurred_at":to_kst(e.occurred_at).isoformat()} for e,s,a in rows]
+@app.delete("/api/v3/admin/attendance/{event_id}")
+def delete_attendance(event_id:int,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    event=db.get(AttendanceEvent,event_id)
+    if not event or event.academy_id!=auth["academy_id"]:
+        raise HTTPException(404,"출석기록을 찾을 수 없습니다.")
+    db.delete(event)
+    db.commit()
+    return {"ok":True}
+
 @app.get("/api/v3/admin/attendance")
 def admin_attendance(year:int,month:int,q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
     start,end=month_bounds(year,month); stmt=select(AttendanceEvent,Student).join(Student,Student.id==AttendanceEvent.student_id).where(AttendanceEvent.academy_id==auth["academy_id"],AttendanceEvent.occurred_at>=start,AttendanceEvent.occurred_at<end)
     if q.strip(): stmt=stmt.where(or_(Student.name.ilike(f"%{q.strip()}%"),Student.phone_last4.ilike(f"%{q.strip()}%")))
-    rows=db.execute(stmt.order_by(AttendanceEvent.occurred_at.desc()).limit(10000)).all(); return [{"student_id":s.id,"student_name":s.name,"phone_last4":s.phone_last4,"event_type":e.event_type,"source":e.source,"occurred_at":e.occurred_at.isoformat()} for e,s in rows]
+    rows=db.execute(stmt.order_by(AttendanceEvent.occurred_at.desc()).limit(10000)).all(); return [{"student_id":s.id,"student_name":s.name,"phone_last4":s.phone_last4,"event_type":e.event_type,"source":e.source,"occurred_at":to_kst(e.occurred_at).isoformat()} for e,s in rows]
 
 @app.post("/api/v3/academy-management/verify")
 async def manage_verify(r:KeyReq):
@@ -679,4 +693,4 @@ def manage_delete(r:ManageReq,db:Session=Depends(get_db)):
 def manage_notice(r:NoticeWrite,db:Session=Depends(get_db)):
     read_token(r.management_token,"academy_management",600)
     if r.notice_type not in {"regular","emergency"}: raise HTTPException(400,"공지 종류가 올바르지 않습니다.")
-    n=db.get(Notice,r.notice_type) or Notice(notice_type=r.notice_type); n.content=r.content.strip(); n.is_active=r.is_active; n.updated_at=datetime.now(timezone.utc); db.add(n); db.commit(); return {"ok":True}
+    n=db.get(Notice,r.notice_type) or Notice(notice_type=r.notice_type); n.content=r.content.strip(); n.is_active=r.is_active; n.updated_at=now_kst().astimezone(timezone.utc); db.add(n); db.commit(); return {"ok":True}
