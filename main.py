@@ -91,7 +91,7 @@ class NoticeWrite(BaseModel): management_token:str; notice_type:str; content:str
 class AcademyUpdate(BaseModel): management_token:str; academy_id:int; name:str|None=None; region:str|None=None; district:str|None=None; is_active:bool|None=None
 class ManageReq(BaseModel): management_token:str; academy_id:int
 
-@app.get("/")
+@app.get("/health")
 def health(): return {"ok":True,"service":"codenote-attendance-v3"}
 @app.get("/api/v3/notices")
 def notices(db:Session=Depends(get_db)): return [{"type":n.notice_type,"content":n.content,"is_active":n.is_active} for n in db.scalars(select(Notice)).all()]
