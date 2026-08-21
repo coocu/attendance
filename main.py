@@ -5,7 +5,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, text
 from sqlalchemy.orm import Session
 from db import Base, engine, get_db
 from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,Notice
@@ -18,6 +18,10 @@ app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(engine)
+    # 기존 DB 유지 + NFC 미등록 학생 허용
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE students ALTER COLUMN nfc_token DROP NOT NULL"))
+        conn.execute(text("ALTER TABLE students ALTER COLUMN nfc_active SET DEFAULT FALSE"))
     with next(get_db()) as db:
         for t in ("regular","emergency"):
             if db.get(Notice,t) is None: db.add(Notice(notice_type=t))
@@ -29,7 +33,7 @@ def digits(v,n,label):
 def bearer(a):
     if not a or not a.startswith("Bearer "): raise HTTPException(401,"로그인이 필요합니다.")
     return a[7:]
-def admin_auth(authorization:str|None=Header(default=None)): return read_token(bearer(authorization),"admin",60*60*24)
+def admin_auth(authorization:str|None=Header(default=None)): return read_token(bearer(authorization),"admin",60*60*24*365)
 def parent_auth(authorization:str|None=Header(default=None)): return read_token(bearer(authorization),"parent",60*60*24*365)
 def active_academy(db,id):
     a=db.get(Academy,id)
@@ -58,11 +62,14 @@ class ChangePw(BaseModel): current_password:str; new_password:str=Field(min_leng
 class RecoveryVerify(BaseModel): academy_id:int; recovery_name:str; recovery_phone_last4:str
 class ResetPw(BaseModel): recovery_token:str; new_password:str=Field(min_length=4)
 class NewStudentNfc(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""; nfc_token:str
+class NewStudentNoNfc(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""
+class NfcConfirm(BaseModel): nfc_registration_token:str
 class AttachExisting(BaseModel): nfc_token:str; attendance_pin:str; memo:str=""
 class EditStudent(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""; confirm_global:bool=False
 class NfcLookup(BaseModel): nfc_token:str
 class NfcReplace(BaseModel): new_nfc_token:str
 class AttendanceReq(BaseModel): nfc_token:str|None=None; attendance_pin:str|None=None
+class ManualAttendanceReq(BaseModel): student_id:int; event_type:str; occurred_at:datetime
 class NoticeWrite(BaseModel): management_token:str; notice_type:str; content:str; is_active:bool
 class AcademyUpdate(BaseModel): management_token:str; academy_id:int; name:str|None=None; region:str|None=None; district:str|None=None; is_active:bool|None=None
 class ManageReq(BaseModel): management_token:str; academy_id:int
@@ -121,16 +128,18 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 
   <div id="loginCard" class="card">
     <div class="section-title">관리자 로그인</div>
+
+    <input id="academyQ" placeholder="학원 이름 검색" autocomplete="off">
+    <div id="academySearchResults" class="hidden" style="margin-top:8px;border:1px solid var(--line);border-radius:12px;background:#fff;overflow:hidden"></div>
+
+    <div style="height:12px"></div>
     <div class="grid3">
       <select id="region"><option value="">지역</option></select>
       <select id="district"><option value="">시·군·구</option></select>
       <select id="academy"><option value="">학원</option></select>
     </div>
     <div style="height:12px"></div>
-    <div class="grid">
-      <input id="academyQ" placeholder="학원 이름 검색">
-      <input id="password" type="password" placeholder="관리자 비밀번호">
-    </div>
+    <input id="password" type="password" placeholder="관리자 비밀번호">
     <div style="height:12px"></div>
     <button class="primary" onclick="login()">관리자 로그인</button>
     <button style="background:transparent;color:var(--blue);padding:10px 0 0" onclick="openForgot()">비밀번호를 잊으셨나요?</button>
@@ -167,17 +176,15 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 
     <section id="studentsPanel">
       <div class="card">
-        <div class="between"><div class="section-title">학생 등록 / NFC 확인</div><div class="small">PC에서는 NFC 리더기가 토큰값을 입력할 수 있을 때 등록 가능합니다.</div></div>
+        <div class="between"><div class="section-title">학생 등록</div><div class="small">NFC 카드가 없어도 먼저 등록할 수 있습니다. NFC는 학생 목록에서 나중에 등록/재등록할 수 있습니다.</div></div>
         <div class="grid3">
-          <div class="small" style="padding:13px 14px;border:1px solid #d7dbe5;border-radius:12px;background:#f9fafb">신규 NFC 등록은 Android 관리자 앱에서 진행합니다.</div>
           <input id="studentName" placeholder="학생 이름">
-          <input id="studentPhone" maxlength="4" placeholder="전화번호 뒤 4자리">
-          <input id="studentPin" maxlength="4" placeholder="출석번호 4자리">
+          <input id="studentPhone" maxlength="4" inputmode="numeric" placeholder="전화번호 뒤 4자리">
+          <input id="studentPin" maxlength="4" inputmode="numeric" placeholder="출석번호 4자리">
           <input id="studentMemo" placeholder="관리자 메모">
-          <div></div>
         </div>
         <div style="height:10px"></div>
-        <button class="secondary" type="button" onclick="document.getElementById('studentFormMsg').textContent='신규 학생은 Android 관리자 앱에서 NFC 카드를 태그하여 등록해주세요.'">신규 학생 등록 안내</button>
+        <button class="primary" onclick="saveStudentNoNfc()">학생 등록</button>
         <div id="studentFormMsg" class="msg"></div>
       </div>
       <div class="card">
@@ -201,6 +208,24 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       </div>
     </section>
   </div>
+
+  <div id="manualAttendanceBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:50;padding:24px;display:flex;align-items:center;justify-content:center">
+    <div class="card" style="width:min(520px,100%);margin:0">
+      <div class="between">
+        <div><div class="section-title" style="margin:0">출석등록</div><div id="manualStudentName" class="small"></div></div>
+        <button class="secondary" onclick="closeManualAttendance()">닫기</button>
+      </div>
+      <div style="height:14px"></div>
+      <div class="grid">
+        <select id="manualType"><option value="IN">입실</option><option value="OUT">퇴실</option></select>
+        <input id="manualTime" type="datetime-local" step="1800">
+      </div>
+      <div class="small" style="margin-top:8px">시간은 30분 단위로 선택합니다. 과거 시간으로 등록해도 학부모 알림은 즉시 전송됩니다.</div>
+      <div style="height:14px"></div>
+      <button class="primary" onclick="saveManualAttendance()">출석 등록</button>
+      <div id="manualMsg" class="msg"></div>
+    </div>
+  </div>
 </div>
 <script>
 let token="", academyId=null, academyName="", nfcExisting=false;
@@ -212,7 +237,27 @@ async function init(){
 }
 $("region").onchange=async()=>{const r=$("region").value;$("district").innerHTML='<option value="">시·군·구</option>';$("academy").innerHTML='<option value="">학원</option>';if(!r)return;const ds=await api("/api/v3/districts?region="+encodeURIComponent(r));$("district").innerHTML='<option value="">시·군·구</option>'+ds.map(x=>`<option>${x}</option>`).join("")}
 $("district").onchange=loadAcademies;
-$("academyQ").oninput=async()=>{const q=$("academyQ").value.trim();if(!q)return loadAcademies();const xs=await api("/api/v3/academies/search?q="+encodeURIComponent(q));$("academy").innerHTML='<option value="">검색 결과</option>'+xs.map(a=>`<option value="${a.id}" data-name="${esc(a.name)}">${esc(a.region)} / ${esc(a.district)} / ${esc(a.name)}</option>`).join("")}
+$("academyQ").oninput=async()=>{
+  const q=$("academyQ").value.trim(),box=$("academySearchResults");
+  if(!q){box.innerHTML="";box.classList.add("hidden");return;}
+  try{
+    const xs=await api("/api/v3/academies/search?q="+encodeURIComponent(q));
+    if(!xs.length){box.innerHTML='<div style="padding:12px;color:#6b7280">검색된 학원이 없습니다.</div>';box.classList.remove("hidden");return;}
+    box.innerHTML=xs.map(a=>`<button type="button" style="display:block;width:100%;text-align:left;background:#fff;border-radius:0;border-bottom:1px solid #eee" onclick="selectSearchedAcademy(${a.id},'${esc(a.name).replace(/'/g,"&#39;")}','${esc(a.region).replace(/'/g,"&#39;")}','${esc(a.district).replace(/'/g,"&#39;")}')"><b>${esc(a.name)}</b><br><span class="small">${esc(a.region)} / ${esc(a.district)}</span></button>`).join("");
+    box.classList.remove("hidden");
+  }catch(e){box.innerHTML='<div style="padding:12px;color:#c62828">'+esc(e.message)+'</div>';box.classList.remove("hidden");}
+}
+async function selectSearchedAcademy(id,name,region,district){
+  $("academyQ").value=name;
+  $("academySearchResults").classList.add("hidden");
+  if(!Array.from($("region").options).some(o=>o.value===region)) $("region").add(new Option(region,region));
+  $("region").value=region;
+  const ds=await api("/api/v3/districts?region="+encodeURIComponent(region));
+  $("district").innerHTML='<option value="">시·군·구</option>'+ds.map(x=>`<option>${x}</option>`).join("");
+  $("district").value=district;
+  $("academy").innerHTML=`<option value="${id}">${esc(name)}</option>`;
+  $("academy").value=String(id);
+}
 async function loadAcademies(){const r=$("region").value,d=$("district").value;if(!r||!d)return;const xs=await api(`/api/v3/academies?region=${encodeURIComponent(r)}&district=${encodeURIComponent(d)}`);$("academy").innerHTML='<option value="">학원</option>'+xs.map(a=>`<option value="${a.id}" data-name="${esc(a.name)}">${esc(a.name)}</option>`).join("")}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";loadStudents()}catch(e){$("loginMsg").textContent=e.message}}
@@ -223,10 +268,49 @@ async function resetPasswordNow(){try{if(!recoveryToken)throw new Error("먼저 
 
 function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
 function showTab(t){for(const x of ["students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
-async function loadStudents(){if(!token)return;try{const q=$("studentQ").value.trim();const xs=await api("/api/v3/admin/students?q="+encodeURIComponent(q));$("studentsBody").innerHTML=xs.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone_last4)}</td><td>${esc(s.attendance_pin)}</td><td>${esc(s.memo)}</td><td>${s.nfc_registered?'<span class="pill">등록</span>':'-'}</td><td><button class="danger" onclick="removeStudent(${s.student_id})">퇴원</button></td></tr>`).join("")}catch(e){alert(e.message)}}
-async function lookupNfc(){try{const t=$("nfcToken").value.trim();if(!t)throw new Error("NFC 토큰을 입력하거나 태그해주세요.");const d=await api("/api/v3/admin/nfc/lookup",{method:"POST",body:JSON.stringify({nfc_token:t})});nfcExisting=d.exists;if(d.exists){$("studentName").value=d.name;$("studentPhone").value=d.phone_last4;$("studentName").disabled=true;$("studentPhone").disabled=true;$("studentFormMsg").textContent=d.already_in_academy?"이미 이 학원에 등록된 학생입니다.":"기존 학생을 확인했습니다. 학원별 출석번호와 메모를 입력하세요.";$("studentFormMsg").className="msg ok"}else{$("studentName").disabled=false;$("studentPhone").disabled=false;$("studentFormMsg").textContent="새 NFC입니다. 신규 학생 정보를 입력하세요.";$("studentFormMsg").className="msg ok"}}catch(e){$("studentFormMsg").textContent=e.message;$("studentFormMsg").className="msg"}}
-async function saveStudent(){try{const t=$("nfcToken").value.trim(),pin=$("studentPin").value.trim(),memo=$("studentMemo").value;if(!t)throw new Error("NFC 등록이 필요합니다.");if(nfcExisting){await api("/api/v3/admin/students/attach-existing",{method:"POST",body:JSON.stringify({nfc_token:t,attendance_pin:pin,memo})})}else{await api("/api/v3/admin/students/new-with-nfc",{method:"POST",body:JSON.stringify({name:$("studentName").value,phone_last4:$("studentPhone").value,attendance_pin:pin,memo,nfc_token:t})})}$("studentFormMsg").textContent="학생 등록 완료";$("studentFormMsg").className="msg ok";for(const id of ["nfcToken","studentName","studentPhone","studentPin","studentMemo"])$(id).value="";$("studentName").disabled=false;$("studentPhone").disabled=false;nfcExisting=false;loadStudents()}catch(e){$("studentFormMsg").textContent=e.message;$("studentFormMsg").className="msg"}}
+async function loadStudents(){if(!token)return;try{const q=$("studentQ").value.trim();const xs=await api("/api/v3/admin/students?q="+encodeURIComponent(q));$("studentsBody").innerHTML=xs.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone_last4)}</td><td>${esc(s.attendance_pin)}</td><td>${esc(s.memo)}</td><td>${s.nfc_registered?'<span class="pill">등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',true)">재등록</button>':'<span class="pill" style="background:#f3f4f6;color:#6b7280">미등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',false)">NFC 등록</button>'}</td><td><div class="row"><button class="secondary" onclick="openManualAttendance(${s.student_id},'${esc(s.name).replace(/'/g,"&#39;")}')">출석등록</button><button class="danger" onclick="removeStudent(${s.student_id})">퇴원</button></div></td></tr>`).join("")}catch(e){alert(e.message)}}
+async function saveStudentNoNfc(){try{
+  const name=$("studentName").value.trim(),phone=$("studentPhone").value.trim(),pin=$("studentPin").value.trim(),memo=$("studentMemo").value;
+  if(!name)throw new Error("학생 이름을 입력해주세요.");
+  if(!/^\d{4}$/.test(phone))throw new Error("전화번호 뒤 4자리를 입력해주세요.");
+  if(!/^\d{4}$/.test(pin))throw new Error("출석번호 4자리를 입력해주세요.");
+  await api("/api/v3/admin/students/new",{method:"POST",body:JSON.stringify({name,phone_last4:phone,attendance_pin:pin,memo})});
+  $("studentFormMsg").textContent="학생 등록 완료 (NFC 미등록)";$("studentFormMsg").className="msg ok";
+  for(const id of ["studentName","studentPhone","studentPin","studentMemo"])$(id).value="";loadStudents();
+}catch(e){$("studentFormMsg").textContent=e.message;$("studentFormMsg").className="msg"}}
+async function prepareStudentNfc(studentId,replacing){try{
+  if(replacing && !confirm("새 NFC 등록을 시작하면 분실한 기존 NFC는 즉시 사용할 수 없게 됩니다. 계속할까요?"))return;
+  const d=await api(`/api/v3/admin/students/${studentId}/nfc/prepare`,{method:"POST"});
+  const tokenToWrite=d.nfc_token, registrationToken=d.nfc_registration_token;
+  if(!("NDEFReader" in window)){
+    alert("새 NFC 토큰이 발급되었고 기존 카드는 비활성화되었습니다. 현재 PC 브라우저는 NFC 카드 직접 쓰기를 지원하지 않습니다. Android 관리자 앱 또는 추후 지원 NFC 리더기로 등록을 완료해주세요. 학생은 NFC 미등록 상태로 유지됩니다.");
+    loadStudents();return;
+  }
+  const ndef=new NDEFReader();
+  await ndef.write({records:[{recordType:"mime",mediaType:"application/vnd.codenote.attendance",data:tokenToWrite}]});
+  await api(`/api/v3/admin/students/${studentId}/nfc/confirm`,{method:"POST",body:JSON.stringify({nfc_registration_token:registrationToken})});
+  alert("NFC 카드 등록이 완료되었습니다.");loadStudents();
+}catch(e){alert(e.message)}}
 async function removeStudent(id){if(!confirm("이 학원에서 학생을 퇴원 처리할까요? 다른 학원 연결은 유지됩니다."))return;try{await api("/api/v3/admin/students/"+id,{method:"DELETE"});loadStudents()}catch(e){alert(e.message)}}
+let manualStudentId=0;
+function rounded30Local(){
+  const d=new Date();d.setSeconds(0,0);d.setMinutes(Math.floor(d.getMinutes()/30)*30);
+  const off=d.getTimezoneOffset();const local=new Date(d.getTime()-off*60000);
+  return local.toISOString().slice(0,16);
+}
+function openManualAttendance(id,name){
+  manualStudentId=id;$("manualStudentName").textContent=name;$("manualTime").value=rounded30Local();$("manualMsg").textContent="";
+  $("manualAttendanceBox").classList.remove("hidden");
+}
+function closeManualAttendance(){$("manualAttendanceBox").classList.add("hidden");manualStudentId=0;}
+async function saveManualAttendance(){try{
+  if(!manualStudentId)throw new Error("학생을 선택해주세요.");
+  const local=$("manualTime").value;if(!local)throw new Error("출석 시간을 선택해주세요.");
+  const dt=new Date(local);if(isNaN(dt.getTime()))throw new Error("출석 시간이 올바르지 않습니다.");
+  if(dt.getMinutes()%30!==0)throw new Error("시간은 30분 단위로 선택해주세요.");
+  const d=await api("/api/v3/admin/attendance/manual",{method:"POST",body:JSON.stringify({student_id:manualStudentId,event_type:$("manualType").value,occurred_at:dt.toISOString()})});
+  $("manualMsg").textContent=d.message||"출석이 등록되었습니다.";$("manualMsg").className="msg ok";loadAttendance();
+}catch(e){$("manualMsg").textContent=e.message;$("manualMsg").className="msg"}}
 async function loadAttendance(){if(!token)return;try{const [y,m]=$("month").value.split("-");const q=$("attQ").value.trim();const xs=await api(`/api/v3/admin/attendance?year=${y}&month=${Number(m)}&q=${encodeURIComponent(q)}`);$("attendanceBody").innerHTML=xs.map(e=>`<tr><td>${new Date(e.occurred_at).toLocaleString("ko-KR")}</td><td>${esc(e.student_name)}</td><td>${esc(e.phone_last4)}</td><td>${e.event_type==="IN"?"입실":"퇴실"}</td><td>${esc(e.source)}</td></tr>`).join("")}catch(e){alert(e.message)}}
 async function changePassword(){try{await api("/api/v3/admin/password",{method:"POST",body:JSON.stringify({current_password:$("currentPw").value,new_password:$("newPw").value})});$("pwMsg").textContent="비밀번호가 변경되었습니다.";$("pwMsg").className="msg ok"}catch(e){$("pwMsg").textContent=e.message;$("pwMsg").className="msg"}}
 init().catch(e=>$("loginMsg").textContent=e.message);
@@ -268,6 +352,42 @@ def recovery(r:RecoveryVerify,db:Session=Depends(get_db)):
 def recovery_reset(r:ResetPw,db:Session=Depends(get_db)):
     d=read_token(r.recovery_token,"recovery",600); c=db.get(AdminCredential,d["academy_id"]); c.password_hash=hash_password(r.new_password); db.commit(); return {"ok":True}
 
+@app.post("/api/v3/admin/students/new")
+def new_student_without_nfc(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    phone=digits(r.phone_last4,4,"전화번호 뒷자리"); pin=digits(r.attendance_pin,4,"출석번호")
+    if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))):
+        raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
+    s=Student(name=r.name.strip(),phone_last4=phone,nfc_token=None,nfc_active=False); db.add(s); db.flush()
+    sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush()
+    refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit()
+    return {"student_id":s.id,"student_academy_id":sa.id,"nfc_registered":False,"extra_code":sa.login_extra_code}
+
+@app.post("/api/v3/admin/students/{student_id}/nfc/prepare")
+def prepare_student_nfc(student_id:int,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True)))
+    s=db.get(Student,student_id)
+    if not sa or not s: raise HTTPException(404,"학생을 찾을 수 없습니다.")
+    # 재발급을 시작하는 즉시 분실한 이전 카드를 서버에서 무효화합니다.
+    s.nfc_token=None; s.nfc_active=False; s.updated_at=datetime.now(timezone.utc); db.flush()
+    while True:
+        value="CN-"+secrets.token_urlsafe(32)
+        if not db.scalar(select(Student.id).where(Student.nfc_token==value)): break
+    registration=token("nfc_registration",student_id=s.id,academy_id=auth["academy_id"],nfc_token=value)
+    db.commit()
+    return {"nfc_token":value,"nfc_registration_token":registration,"nfc_registered":False}
+
+@app.post("/api/v3/admin/students/{student_id}/nfc/confirm")
+def confirm_student_nfc(student_id:int,r:NfcConfirm,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    p=read_token(r.nfc_registration_token,"nfc_registration",600)
+    if int(p.get("student_id",0))!=student_id or int(p.get("academy_id",0))!=int(auth["academy_id"]): raise HTTPException(401,"NFC 등록정보가 올바르지 않습니다.")
+    sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True)))
+    s=db.get(Student,student_id)
+    if not sa or not s: raise HTTPException(404,"학생을 찾을 수 없습니다.")
+    nt=str(p.get("nfc_token","")).strip()
+    if not nt: raise HTTPException(400,"NFC 토큰이 없습니다.")
+    if db.scalar(select(Student).where(Student.nfc_token==nt,Student.id!=student_id)): raise HTTPException(409,"이미 다른 학생에게 사용 중인 NFC 토큰입니다.")
+    s.nfc_token=nt; s.nfc_active=True; s.updated_at=datetime.now(timezone.utc); db.commit(); return {"ok":True,"nfc_registered":True}
+
 @app.post("/api/v3/admin/nfc/issue-token")
 def issue_nfc_token(auth=Depends(admin_auth),db:Session=Depends(get_db)):
     while True:
@@ -287,14 +407,20 @@ def new_student(r:NewStudentNfc,auth=Depends(admin_auth),db:Session=Depends(get_
     if not nt: raise HTTPException(400,"NFC 카드 등록이 필요합니다.")
     if db.scalar(select(Student).where(Student.nfc_token==nt)): raise HTTPException(409,"이미 등록된 NFC 카드입니다. 기존 학생 불러오기를 사용하세요.")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))): raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
-    s=Student(name=r.name.strip(),phone_last4=phone,nfc_token=nt); db.add(s); db.flush(); sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush(); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit(); return {"student_id":s.id,"student_academy_id":sa.id,"extra_code":sa.login_extra_code}
+    s=Student(name=r.name.strip(),phone_last4=phone,nfc_token=nt,nfc_active=True); db.add(s); db.flush(); sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush(); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit(); return {"student_id":s.id,"student_academy_id":sa.id,"extra_code":sa.login_extra_code}
 @app.post("/api/v3/admin/students/attach-existing")
 def attach(r:AttachExisting,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     pin=digits(r.attendance_pin,4,"출석번호"); s=db.scalar(select(Student).where(Student.nfc_token==r.nfc_token.strip(),Student.nfc_active.is_(True)))
     if not s: raise HTTPException(404,"등록된 NFC 학생이 아닙니다.")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==s.id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))): raise HTTPException(409,"이미 이 학원에 등록된 학생입니다.")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))): raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
-    sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush(); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit(); return {"student_id":s.id,"name":s.name,"phone_last4":s.phone_last4,"extra_code":sa.login_extra_code}
+    sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush(); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4)
+    # 이미 이 학생으로 로그인한 학부모 기기에는 새 학원을 자동 연결합니다.
+    device_ids=list(db.scalars(select(ParentLink.device_id).where(ParentLink.student_id==s.id).distinct()).all())
+    for did in device_ids:
+        if not db.scalar(select(ParentLink).where(ParentLink.device_id==did,ParentLink.student_id==s.id,ParentLink.academy_id==auth["academy_id"])):
+            db.add(ParentLink(device_id=did,student_id=s.id,academy_id=auth["academy_id"]))
+    db.commit(); return {"student_id":s.id,"name":s.name,"phone_last4":s.phone_last4,"extra_code":sa.login_extra_code}
 @app.get("/api/v3/admin/students")
 def students(q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
     stmt=select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))
@@ -367,7 +493,10 @@ def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
     d=db.scalar(select(ParentDevice).where(ParentDevice.installation_id==r.installation_id,ParentDevice.platform==r.platform))
     if not d: d=ParentDevice(installation_id=r.installation_id,platform=r.platform,push_token=r.push_token); db.add(d); db.flush()
     else: d.push_token=r.push_token or d.push_token; d.updated_at=datetime.now(timezone.utc)
-    if not db.scalar(select(ParentLink).where(ParentLink.device_id==d.id,ParentLink.student_id==s.id,ParentLink.academy_id==a.id)): db.add(ParentLink(device_id=d.id,student_id=s.id,academy_id=a.id))
+    academy_ids=list(db.scalars(select(StudentAcademy.academy_id).where(StudentAcademy.student_id==s.id,StudentAcademy.is_active.is_(True))).all())
+    for aid in academy_ids:
+        if not db.scalar(select(ParentLink).where(ParentLink.device_id==d.id,ParentLink.student_id==s.id,ParentLink.academy_id==aid)):
+            db.add(ParentLink(device_id=d.id,student_id=s.id,academy_id=aid))
     db.commit(); return {"needs_extra_code":False,"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name,"access_token":token("parent",device_id=d.id)}
 @app.get("/api/v3/parent/links")
 def parent_links(auth=Depends(parent_auth),db:Session=Depends(get_db)):
