@@ -3,6 +3,7 @@ uvicorn[standard]==0.35.0
 SQLAlchemy==2.0.43
 psycopg[binary]==3.2.10
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 PyJWT==2.10.1
 httpx==0.28.1
 firebase-admin==6.9.0
