@@ -235,9 +235,9 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <div style="height:14px"></div>
       <div class="grid">
         <select id="manualType"><option value="IN">입실</option><option value="OUT">퇴실</option></select>
-        <input id="manualTime" type="datetime-local" step="1800">
+        <input id="manualTime" type="datetime-local" step="60">
       </div>
-      <div class="small" style="margin-top:8px">시간은 30분 단위로 선택합니다. 과거 시간으로 등록해도 학부모 알림은 즉시 전송됩니다.</div>
+      <div class="small" style="margin-top:8px">시간은 1분 단위로 선택합니다. 과거 시간으로 등록해도 학부모 알림은 즉시 전송됩니다.</div>
       <div style="height:14px"></div>
       <button class="primary" onclick="saveManualAttendance()">출석 등록</button>
       <div id="manualMsg" class="msg"></div>
@@ -310,13 +310,13 @@ async function prepareStudentNfc(studentId,replacing){try{
 }catch(e){alert(e.message)}}
 async function removeStudent(id){if(!confirm("이 학원에서 학생을 퇴원 처리할까요? 다른 학원 연결은 유지됩니다."))return;try{await api("/api/v3/admin/students/"+id,{method:"DELETE"});loadStudents()}catch(e){alert(e.message)}}
 let manualStudentId=0;
-function rounded30Local(){
-  const d=new Date();d.setSeconds(0,0);d.setMinutes(Math.floor(d.getMinutes()/30)*30);
+function currentMinuteLocal(){
+  const d=new Date();d.setSeconds(0,0);
   const off=d.getTimezoneOffset();const local=new Date(d.getTime()-off*60000);
   return local.toISOString().slice(0,16);
 }
 function openManualAttendance(id,name){
-  manualStudentId=id;$("manualStudentName").textContent=name;$("manualTime").value=rounded30Local();$("manualMsg").textContent="";
+  manualStudentId=id;$("manualStudentName").textContent=name;$("manualTime").value=currentMinuteLocal();$("manualMsg").textContent="";
   $("manualAttendanceBox").classList.remove("hidden");
 }
 function closeManualAttendance(){$("manualAttendanceBox").classList.add("hidden");manualStudentId=0;}
@@ -324,7 +324,6 @@ async function saveManualAttendance(){try{
   if(!manualStudentId)throw new Error("학생을 선택해주세요.");
   const local=$("manualTime").value;if(!local)throw new Error("출석 시간을 선택해주세요.");
   const dt=new Date(local);if(isNaN(dt.getTime()))throw new Error("출석 시간이 올바르지 않습니다.");
-  if(dt.getMinutes()%30!==0)throw new Error("시간은 30분 단위로 선택해주세요.");
   const d=await api("/api/v3/admin/attendance/manual",{method:"POST",body:JSON.stringify({student_id:manualStudentId,event_type:$("manualType").value,occurred_at:dt.toISOString()})});
   $("manualMsg").textContent=d.message||"출석이 등록되었습니다.";$("manualMsg").className="msg ok";loadAttendance();
 }catch(e){$("manualMsg").textContent=e.message;$("manualMsg").className="msg"}}
@@ -505,8 +504,6 @@ def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=
         raise HTTPException(400,"미래 시간으로 출석을 등록할 수 없습니다.")
 
     local=to_kst(occurred)
-    if local.minute not in (0,30):
-        raise HTTPException(400,"출석 시간은 30분 단위로 등록해주세요.")
 
     event=AttendanceEvent(
         academy_id=auth["academy_id"],
@@ -682,7 +679,7 @@ def delete_attendance(event_id:int,auth=Depends(admin_auth),db:Session=Depends(g
 def admin_attendance(year:int,month:int,q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
     start,end=month_bounds(year,month); stmt=select(AttendanceEvent,Student).join(Student,Student.id==AttendanceEvent.student_id).where(AttendanceEvent.academy_id==auth["academy_id"],AttendanceEvent.occurred_at>=start,AttendanceEvent.occurred_at<end)
     if q.strip(): stmt=stmt.where(or_(Student.name.ilike(f"%{q.strip()}%"),Student.phone_last4.ilike(f"%{q.strip()}%")))
-    rows=db.execute(stmt.order_by(AttendanceEvent.occurred_at.desc()).limit(10000)).all(); return [{"student_id":s.id,"student_name":s.name,"phone_last4":s.phone_last4,"event_type":e.event_type,"source":e.source,"occurred_at":to_kst(e.occurred_at).isoformat()} for e,s in rows]
+    rows=db.execute(stmt.order_by(AttendanceEvent.occurred_at.desc()).limit(10000)).all(); return [{"id":e.id,"student_id":s.id,"student_name":s.name,"phone_last4":s.phone_last4,"event_type":e.event_type,"source":e.source,"occurred_at":to_kst(e.occurred_at).isoformat()} for e,s in rows]
 
 @app.post("/api/v3/academy-management/verify")
 async def manage_verify(r:KeyReq):
