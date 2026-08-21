@@ -160,6 +160,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
     <div style="height:12px"></div>
     <button class="primary" onclick="login()">관리자 로그인</button>
     <button style="background:transparent;color:var(--blue);padding:10px 0 0" onclick="openForgot()">비밀번호를 잊으셨나요?</button>
+    <button class="secondary" style="margin-top:10px" onclick="openAcademyManagement()">학원 관리</button>
     <div id="loginMsg" class="msg"></div>
 
     <div id="forgotBox" class="hidden" style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
@@ -180,6 +181,8 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
         <button class="primary" onclick="resetPasswordNow()">비밀번호 재설정</button>
       </div>
       <div id="forgotMsg" class="msg"></div>
+      <div style="height:10px"></div>
+      <button class="secondary" onclick="backToLogin()">로그인 화면으로 돌아가기</button>
     </div>
   </div>
 
@@ -226,6 +229,63 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
     </section>
   </div>
 
+  <div id="academyManagementBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:60;padding:24px;display:flex;align-items:center;justify-content:center">
+    <div class="card" style="width:min(960px,100%);max-height:90vh;overflow:auto;margin:0">
+      <div class="between">
+        <div>
+          <div class="section-title" style="margin:0">학원 관리</div>
+          <div class="small">전체 학원 수정 · 활성/비활성 · 삭제 · 공지 관리</div>
+        </div>
+        <button class="secondary" onclick="closeAcademyManagement()">닫기</button>
+      </div>
+
+      <div id="managementAuthBox" style="margin-top:16px">
+        <div class="grid">
+          <input id="managementKey" type="password" placeholder="학원 관리 인증키">
+          <button class="primary" onclick="verifyAcademyManagement()">인증</button>
+        </div>
+        <div id="managementAuthMsg" class="msg"></div>
+      </div>
+
+      <div id="managementContent" class="hidden" style="margin-top:18px">
+        <div class="card" style="box-shadow:none">
+          <div class="section-title">공지 관리</div>
+          <div class="grid">
+            <div>
+              <div class="small" style="margin-bottom:6px">일반공지</div>
+              <textarea id="regularNotice" placeholder="일반공지 내용"></textarea>
+              <label class="small"><input id="regularNoticeActive" type="checkbox"> 활성화</label>
+              <div style="height:8px"></div>
+              <button class="secondary" onclick="saveNotice('regular')">일반공지 저장</button>
+            </div>
+            <div>
+              <div class="small" style="margin-bottom:6px">긴급공지</div>
+              <textarea id="emergencyNotice" placeholder="긴급공지 내용"></textarea>
+              <label class="small"><input id="emergencyNoticeActive" type="checkbox"> 활성화</label>
+              <div style="height:8px"></div>
+              <button class="secondary" onclick="saveNotice('emergency')">긴급공지 저장</button>
+            </div>
+          </div>
+          <div id="noticeMsg" class="msg"></div>
+        </div>
+
+        <div class="card" style="box-shadow:none">
+          <div class="between">
+            <div class="section-title" style="margin:0">등록 학원</div>
+            <input id="managementSearch" style="max-width:320px" placeholder="학원 검색" oninput="renderManagementAcademies()">
+          </div>
+          <div class="tablewrap">
+            <table>
+              <thead><tr><th>지역</th><th>시·군·구</th><th>학원명</th><th>상태</th><th></th></tr></thead>
+              <tbody id="managementAcademiesBody"></tbody>
+            </table>
+          </div>
+          <div id="managementMsg" class="msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="manualAttendanceBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:50;padding:24px;display:flex;align-items:center;justify-content:center">
     <div class="card" style="width:min(520px,100%);margin:0">
       <div class="between">
@@ -239,11 +299,18 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       </div>
       <div class="small" style="margin-top:8px">시간은 1분 단위로 선택합니다. 과거 시간으로 등록해도 학부모 알림은 즉시 전송됩니다.</div>
       <div style="height:14px"></div>
-      <button class="primary" onclick="saveManualAttendance()">출석 등록</button>
+      <button class="primary" onclick="saveManualAttendance()">등록</button>
       <div id="manualMsg" class="msg"></div>
     </div>
   </div>
 </div>
+
+  <div id="sentSuccessBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:80;padding:24px;display:flex;align-items:center;justify-content:center">
+    <div class="card" style="width:min(360px,100%);margin:0;text-align:center">
+      <div class="section-title">전송되었습니다.</div>
+      <button class="primary" style="width:100%" onclick="confirmSentSuccess()">확인</button>
+    </div>
+  </div>
 <script>
 let token="", academyId=null, academyName="", nfcExisting=false;
 const $=id=>document.getElementById(id);
@@ -280,10 +347,135 @@ function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&l
 async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";loadStudents()}catch(e){$("loginMsg").textContent=e.message}}
 let recoveryToken="";
 function openForgot(){const id=Number($("academy").value);if(!id){$("loginMsg").textContent="학원을 먼저 선택해주세요.";return;}$("loginMsg").textContent="";$("forgotBox").classList.toggle("hidden");}
+function backToLogin(){
+  $("forgotBox").classList.add("hidden");
+  $("resetBox").classList.add("hidden");
+  $("recoveryName").value="";
+  $("recoveryPhone").value="";
+  $("resetPassword").value="";
+  $("resetPassword2").value="";
+  $("forgotMsg").textContent="";
+  recoveryToken="";
+}
 async function verifyRecovery(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 먼저 선택해주세요.");const name=$("recoveryName").value.trim();const phone=$("recoveryPhone").value.trim();if(!name)throw new Error("최초 관리자 성함을 입력해주세요.");if(!/^\d{4}$/.test(phone))throw new Error("전화번호 끝 4자리를 입력해주세요.");const d=await api("/api/v3/admin/recovery/verify",{method:"POST",body:JSON.stringify({academy_id:id,recovery_name:name,recovery_phone_last4:phone})});recoveryToken=d.recovery_token;$("resetBox").classList.remove("hidden");$("forgotMsg").textContent="본인 확인이 완료되었습니다.";$("forgotMsg").className="msg ok"}catch(e){$("forgotMsg").textContent=e.message;$("forgotMsg").className="msg"}}
 async function resetPasswordNow(){try{if(!recoveryToken)throw new Error("먼저 본인 확인을 해주세요.");const p=$("resetPassword").value,p2=$("resetPassword2").value;if(p.length<4)throw new Error("새 비밀번호는 4자리 이상 입력해주세요.");if(p!==p2)throw new Error("새 비밀번호가 일치하지 않습니다.");await api("/api/v3/admin/recovery/reset",{method:"POST",body:JSON.stringify({recovery_token:recoveryToken,new_password:p})});$("forgotMsg").textContent="관리자 비밀번호가 변경되었습니다.";$("forgotMsg").className="msg ok";recoveryToken="";$("resetBox").classList.add("hidden");$("password").value=""}catch(e){$("forgotMsg").textContent=e.message;$("forgotMsg").className="msg"}}
 
 function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
+
+let academyManagementToken="";
+let managementAcademies=[];
+
+function openAcademyManagement(){
+  $("academyManagementBox").classList.remove("hidden");
+}
+function closeAcademyManagement(){
+  $("academyManagementBox").classList.add("hidden");
+  $("managementAuthMsg").textContent="";
+  $("managementMsg").textContent="";
+}
+async function verifyAcademyManagement(){
+  try{
+    const key=$("managementKey").value.trim();
+    if(!key)throw new Error("인증키를 입력해주세요.");
+    const d=await api("/api/v3/academy-management/verify",{
+      method:"POST",
+      body:JSON.stringify({license_key:key})
+    });
+    academyManagementToken=d.management_token;
+    $("managementAuthBox").classList.add("hidden");
+    $("managementContent").classList.remove("hidden");
+    await loadManagementAcademies();
+    await loadManagementNotices();
+  }catch(e){
+    $("managementAuthMsg").textContent=e.message;
+  }
+}
+async function loadManagementAcademies(){
+  try{
+    managementAcademies=await api("/api/v3/academy-management/list?management_token="+encodeURIComponent(academyManagementToken));
+    renderManagementAcademies();
+  }catch(e){$("managementMsg").textContent=e.message}
+}
+function renderManagementAcademies(){
+  const q=$("managementSearch").value.trim().toLowerCase();
+  const rows=managementAcademies.filter(a=>
+    !q ||
+    String(a.name).toLowerCase().includes(q) ||
+    String(a.region).toLowerCase().includes(q) ||
+    String(a.district).toLowerCase().includes(q)
+  );
+  $("managementAcademiesBody").innerHTML=rows.map(a=>`
+    <tr>
+      <td><input id="mg-region-${a.id}" value="${esc(a.region)}"></td>
+      <td><input id="mg-district-${a.id}" value="${esc(a.district)}"></td>
+      <td><input id="mg-name-${a.id}" value="${esc(a.name)}"></td>
+      <td>${a.is_active?'<span class="pill">활성</span>':'<span class="pill" style="background:#f3f4f6;color:#6b7280">비활성</span>'}</td>
+      <td>
+        <div class="row">
+          <button class="secondary" onclick="updateManagedAcademy(${a.id},${a.is_active?'false':'true'})">${a.is_active?'비활성화':'활성화'}</button>
+          <button class="secondary" onclick="updateManagedAcademy(${a.id},null)">수정</button>
+          <button class="danger" onclick="deleteManagedAcademy(${a.id},'${esc(a.name).replace(/'/g,"&#39;")}')">삭제</button>
+        </div>
+      </td>
+    </tr>`).join("");
+}
+async function updateManagedAcademy(id,activeValue){
+  try{
+    const body={
+      management_token:academyManagementToken,
+      academy_id:id,
+      name:$("mg-name-"+id).value.trim(),
+      region:$("mg-region-"+id).value.trim(),
+      district:$("mg-district-"+id).value.trim()
+    };
+    if(activeValue!==null)body.is_active=activeValue;
+    await api("/api/v3/academy-management/update",{method:"POST",body:JSON.stringify(body)});
+    $("managementMsg").textContent="저장되었습니다.";
+    $("managementMsg").className="msg ok";
+    await loadManagementAcademies();
+  }catch(e){$("managementMsg").textContent=e.message;$("managementMsg").className="msg"}
+}
+async function deleteManagedAcademy(id,name){
+  if(!confirm(name+" 학원을 완전히 삭제하시겠습니까?"))return;
+  try{
+    await api("/api/v3/academy-management/delete",{
+      method:"POST",
+      body:JSON.stringify({management_token:academyManagementToken,academy_id:id})
+    });
+    $("managementMsg").textContent="삭제되었습니다.";
+    $("managementMsg").className="msg ok";
+    await loadManagementAcademies();
+  }catch(e){$("managementMsg").textContent=e.message;$("managementMsg").className="msg"}
+}
+async function loadManagementNotices(){
+  try{
+    const d=await api("/api/v3/notices");
+    const regular=d.regular||{};
+    const emergency=d.emergency||{};
+    $("regularNotice").value=regular.content||"";
+    $("regularNoticeActive").checked=!!regular.is_active;
+    $("emergencyNotice").value=emergency.content||"";
+    $("emergencyNoticeActive").checked=!!emergency.is_active;
+  }catch(e){
+    // 공지 조회 실패가 학원관리 자체를 막지는 않음
+  }
+}
+async function saveNotice(type){
+  try{
+    const emergency=type==="emergency";
+    await api("/api/v3/academy-management/notice",{
+      method:"POST",
+      body:JSON.stringify({
+        management_token:academyManagementToken,
+        notice_type:type,
+        content:$(emergency?"emergencyNotice":"regularNotice").value,
+        is_active:$(emergency?"emergencyNoticeActive":"regularNoticeActive").checked
+      })
+    });
+    $("noticeMsg").textContent="공지 저장 완료";
+    $("noticeMsg").className="msg ok";
+  }catch(e){$("noticeMsg").textContent=e.message;$("noticeMsg").className="msg"}
+}
 function showTab(t){for(const x of ["students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
 async function loadStudents(){if(!token)return;try{const q=$("studentQ").value.trim();const xs=await api("/api/v3/admin/students?q="+encodeURIComponent(q));$("studentsBody").innerHTML=xs.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone_last4)}</td><td>${esc(s.attendance_pin)}</td><td>${esc(s.memo)}</td><td>${s.nfc_registered?'<span class="pill">등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',true)">재등록</button>':'<span class="pill" style="background:#f3f4f6;color:#6b7280">미등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',false)">NFC 등록</button>'}</td><td><div class="row"><button class="secondary" onclick="openManualAttendance(${s.student_id},'${esc(s.name).replace(/'/g,"&#39;")}')">출석등록</button><button class="danger" onclick="removeStudent(${s.student_id})">퇴원</button></div></td></tr>`).join("")}catch(e){alert(e.message)}}
 async function saveStudentNoNfc(){try{
@@ -324,9 +516,15 @@ async function saveManualAttendance(){try{
   if(!manualStudentId)throw new Error("학생을 선택해주세요.");
   const local=$("manualTime").value;if(!local)throw new Error("출석 시간을 선택해주세요.");
   const dt=new Date(local);if(isNaN(dt.getTime()))throw new Error("출석 시간이 올바르지 않습니다.");
-  const d=await api("/api/v3/admin/attendance/manual",{method:"POST",body:JSON.stringify({student_id:manualStudentId,event_type:$("manualType").value,occurred_at:dt.toISOString()})});
-  $("manualMsg").textContent=d.message||"출석이 등록되었습니다.";$("manualMsg").className="msg ok";loadAttendance();
+  await api("/api/v3/admin/attendance/manual",{method:"POST",body:JSON.stringify({student_id:manualStudentId,event_type:$("manualType").value,occurred_at:dt.toISOString()})});
+  $("manualMsg").textContent="";
+  await loadAttendance();
+  $("sentSuccessBox").classList.remove("hidden");
 }catch(e){$("manualMsg").textContent=e.message;$("manualMsg").className="msg"}}
+function confirmSentSuccess(){
+  $("sentSuccessBox").classList.add("hidden");
+  closeManualAttendance();
+}
 async function loadAttendance(){if(!token)return;try{const [y,m]=$("month").value.split("-");const q=$("attQ").value.trim();const xs=await api(`/api/v3/admin/attendance?year=${y}&month=${Number(m)}&q=${encodeURIComponent(q)}`);$("attendanceBody").innerHTML=xs.map(e=>`<tr><td>${new Date(e.occurred_at).toLocaleString("ko-KR")}</td><td>${esc(e.student_name)}</td><td>${esc(e.phone_last4)}</td><td>${e.event_type==="IN"?"입실":"퇴실"}</td><td>${esc(e.source)}</td><td><button class="danger" onclick="deleteAttendance(${e.id})">삭제</button></td></tr>`).join("")}catch(e){alert(e.message)}}
 async function deleteAttendance(id){
   if(!confirm("이 출석기록을 삭제하시겠습니까?"))return;
