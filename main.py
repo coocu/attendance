@@ -3,6 +3,7 @@ from calendar import monthrange
 import secrets, random
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, or_, func
 from sqlalchemy.orm import Session
@@ -79,6 +80,136 @@ def academies(region:str,district:str,q:str="",db:Session=Depends(get_db)):
     s=select(Academy).where(Academy.is_active.is_(True),Academy.region==region,Academy.district==district)
     if q.strip(): s=s.where(Academy.name.ilike(f"%{q.strip()}%"))
     return [{"id":a.id,"name":a.name,"region":a.region,"district":a.district} for a in db.scalars(s.order_by(Academy.name).limit(300)).all()]
+
+@app.get("/api/v3/academies/search")
+def academy_search(q:str="",db:Session=Depends(get_db)):
+    q=q.strip()
+    if not q: return []
+    stmt=select(Academy).where(Academy.is_active.is_(True),Academy.name.ilike(f"%{q}%")).order_by(Academy.region,Academy.district,Academy.name).limit(50)
+    return [{"id":a.id,"name":a.name,"region":a.region,"district":a.district} for a in db.scalars(stmt).all()]
+
+
+ADMIN_WEB_HTML = r"""<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CodeNote 출석관리</title>
+<style>
+:root{--blue:#4169ef;--bg:#f5f5fa;--card:#fff;--line:#e5e7eb;--text:#111827;--muted:#6b7280}
+*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:var(--bg);color:var(--text)}
+.wrap{max-width:1100px;margin:0 auto;padding:34px 18px}.head{display:flex;align-items:center;gap:14px;margin-bottom:24px}
+.logo{width:54px;height:54px;border-radius:16px;background:#e8edff;color:var(--blue);display:grid;place-items:center;font-size:28px;font-weight:800}
+h1{font-size:26px;margin:0}.sub{color:var(--muted);margin-top:4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px;margin-bottom:18px;box-shadow:0 8px 28px rgba(17,24,39,.04)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+input,select,textarea,button{font:inherit}input,select,textarea{width:100%;padding:13px 14px;border:1px solid #d7dbe5;border-radius:12px;background:#fff}
+textarea{min-height:80px;resize:vertical}button{border:0;border-radius:12px;padding:13px 17px;cursor:pointer}
+.primary{background:var(--blue);color:#fff;font-weight:700}.secondary{background:#eef2ff;color:var(--blue);font-weight:700}.danger{background:#fff0f0;color:#c62828}
+.row{display:flex;gap:10px;align-items:center}.between{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.hidden{display:none!important}.msg{margin-top:10px;color:#c62828;font-size:14px}.ok{color:#177245}
+.tabs{display:flex;gap:8px;margin:0 0 18px}.tab{background:#e9ebf2;color:#4b5563}.tab.on{background:var(--blue);color:#fff}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid #eee;font-size:14px}th{color:#6b7280}
+.pill{display:inline-block;padding:4px 9px;border-radius:999px;background:#eef2ff;color:#395ad7;font-size:12px}
+.small{font-size:13px;color:var(--muted)}.section-title{font-size:18px;font-weight:800;margin:0 0 14px}
+@media(max-width:720px){.grid,.grid3{grid-template-columns:1fr}.between{align-items:flex-start;flex-direction:column}.tablewrap{overflow:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head"><div class="logo">C</div><div><h1>CodeNote 출석관리</h1><div class="sub">PC 관리자</div></div></div>
+
+  <div id="loginCard" class="card">
+    <div class="section-title">관리자 로그인</div>
+    <div class="grid3">
+      <select id="region"><option value="">지역</option></select>
+      <select id="district"><option value="">시·군·구</option></select>
+      <select id="academy"><option value="">학원</option></select>
+    </div>
+    <div style="height:12px"></div>
+    <div class="grid">
+      <input id="academyQ" placeholder="학원 이름 검색">
+      <input id="password" type="password" placeholder="관리자 비밀번호">
+    </div>
+    <div style="height:12px"></div>
+    <button class="primary" onclick="login()">관리자 로그인</button>
+    <div id="loginMsg" class="msg"></div>
+  </div>
+
+  <div id="admin" class="hidden">
+    <div class="card between"><div><div id="academyTitle" class="section-title" style="margin:0"></div><div class="small">관리자 관리용 화면</div></div><button class="secondary" onclick="logout()">로그아웃</button></div>
+    <div class="tabs">
+      <button id="tabStudents" class="tab on" onclick="showTab('students')">학생관리</button>
+      <button id="tabAttendance" class="tab" onclick="showTab('attendance')">출석현황</button>
+      <button id="tabPassword" class="tab" onclick="showTab('password')">비밀번호 변경</button>
+    </div>
+
+    <section id="studentsPanel">
+      <div class="card">
+        <div class="between"><div class="section-title">학생 등록 / NFC 확인</div><div class="small">PC에서는 NFC 리더기가 토큰값을 입력할 수 있을 때 등록 가능합니다.</div></div>
+        <div class="grid3">
+          <input id="nfcToken" placeholder="NFC 토큰">
+          <input id="studentName" placeholder="학생 이름">
+          <input id="studentPhone" maxlength="4" placeholder="전화번호 뒤 4자리">
+          <input id="studentPin" maxlength="4" placeholder="출석번호 4자리">
+          <input id="studentMemo" placeholder="관리자 메모">
+          <button class="secondary" onclick="lookupNfc()">NFC 확인</button>
+        </div>
+        <div style="height:10px"></div>
+        <button class="primary" onclick="saveStudent()">학생 등록</button>
+        <div id="studentFormMsg" class="msg"></div>
+      </div>
+      <div class="card">
+        <div class="between"><div class="section-title">학생 목록</div><input id="studentQ" style="max-width:320px" placeholder="이름 / 전화번호 / 출석번호 검색" oninput="loadStudents()"></div>
+        <div class="tablewrap"><table><thead><tr><th>이름</th><th>전화 뒤4</th><th>출석번호</th><th>메모</th><th>NFC</th><th></th></tr></thead><tbody id="studentsBody"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="attendancePanel" class="hidden">
+      <div class="card">
+        <div class="between"><div class="section-title">월별 출석현황</div><div class="row"><input id="month" type="month"><input id="attQ" placeholder="이름/전화 검색"><button class="secondary" onclick="loadAttendance()">조회</button></div></div>
+        <div class="tablewrap"><table><thead><tr><th>시간</th><th>학생</th><th>전화 뒤4</th><th>상태</th><th>방식</th></tr></thead><tbody id="attendanceBody"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="passwordPanel" class="hidden">
+      <div class="card">
+        <div class="section-title">관리자 비밀번호 변경</div>
+        <div class="grid"><input id="currentPw" type="password" placeholder="현재 비밀번호"><input id="newPw" type="password" placeholder="새 비밀번호"></div>
+        <div style="height:12px"></div><button class="primary" onclick="changePassword()">변경</button><div id="pwMsg" class="msg"></div>
+      </div>
+    </section>
+  </div>
+</div>
+<script>
+let token="", academyId=null, academyName="", nfcExisting=false;
+const $=id=>document.getElementById(id);
+async function api(path,opt={}){const h={"Content-Type":"application/json",...(opt.headers||{})};if(token)h.Authorization="Bearer "+token;const r=await fetch(path,{...opt,headers:h});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.detail||"서버 오류");return d}
+async function init(){
+  const regions=await api("/api/v3/regions"); $("region").innerHTML='<option value="">지역</option>'+regions.map(x=>`<option>${x}</option>`).join("");
+  const now=new Date();$("month").value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`;
+}
+$("region").onchange=async()=>{const r=$("region").value;$("district").innerHTML='<option value="">시·군·구</option>';$("academy").innerHTML='<option value="">학원</option>';if(!r)return;const ds=await api("/api/v3/districts?region="+encodeURIComponent(r));$("district").innerHTML='<option value="">시·군·구</option>'+ds.map(x=>`<option>${x}</option>`).join("")}
+$("district").onchange=loadAcademies;
+$("academyQ").oninput=async()=>{const q=$("academyQ").value.trim();if(!q)return loadAcademies();const xs=await api("/api/v3/academies/search?q="+encodeURIComponent(q));$("academy").innerHTML='<option value="">검색 결과</option>'+xs.map(a=>`<option value="${a.id}" data-name="${esc(a.name)}">${esc(a.region)} / ${esc(a.district)} / ${esc(a.name)}</option>`).join("")}
+async function loadAcademies(){const r=$("region").value,d=$("district").value;if(!r||!d)return;const xs=await api(`/api/v3/academies?region=${encodeURIComponent(r)}&district=${encodeURIComponent(d)}`);$("academy").innerHTML='<option value="">학원</option>'+xs.map(a=>`<option value="${a.id}" data-name="${esc(a.name)}">${esc(a.name)}</option>`).join("")}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
+async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";loadStudents()}catch(e){$("loginMsg").textContent=e.message}}
+function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
+function showTab(t){for(const x of ["students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
+async function loadStudents(){if(!token)return;try{const q=$("studentQ").value.trim();const xs=await api("/api/v3/admin/students?q="+encodeURIComponent(q));$("studentsBody").innerHTML=xs.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone_last4)}</td><td>${esc(s.attendance_pin)}</td><td>${esc(s.memo)}</td><td>${s.nfc_registered?'<span class="pill">등록</span>':'-'}</td><td><button class="danger" onclick="removeStudent(${s.student_id})">퇴원</button></td></tr>`).join("")}catch(e){alert(e.message)}}
+async function lookupNfc(){try{const t=$("nfcToken").value.trim();if(!t)throw new Error("NFC 토큰을 입력하거나 태그해주세요.");const d=await api("/api/v3/admin/nfc/lookup",{method:"POST",body:JSON.stringify({nfc_token:t})});nfcExisting=d.exists;if(d.exists){$("studentName").value=d.name;$("studentPhone").value=d.phone_last4;$("studentName").disabled=true;$("studentPhone").disabled=true;$("studentFormMsg").textContent=d.already_in_academy?"이미 이 학원에 등록된 학생입니다.":"기존 학생을 확인했습니다. 학원별 출석번호와 메모를 입력하세요.";$("studentFormMsg").className="msg ok"}else{$("studentName").disabled=false;$("studentPhone").disabled=false;$("studentFormMsg").textContent="새 NFC입니다. 신규 학생 정보를 입력하세요.";$("studentFormMsg").className="msg ok"}}catch(e){$("studentFormMsg").textContent=e.message;$("studentFormMsg").className="msg"}}
+async function saveStudent(){try{const t=$("nfcToken").value.trim(),pin=$("studentPin").value.trim(),memo=$("studentMemo").value;if(!t)throw new Error("NFC 등록이 필요합니다.");if(nfcExisting){await api("/api/v3/admin/students/attach-existing",{method:"POST",body:JSON.stringify({nfc_token:t,attendance_pin:pin,memo})})}else{await api("/api/v3/admin/students/new-with-nfc",{method:"POST",body:JSON.stringify({name:$("studentName").value,phone_last4:$("studentPhone").value,attendance_pin:pin,memo,nfc_token:t})})}$("studentFormMsg").textContent="학생 등록 완료";$("studentFormMsg").className="msg ok";for(const id of ["nfcToken","studentName","studentPhone","studentPin","studentMemo"])$(id).value="";$("studentName").disabled=false;$("studentPhone").disabled=false;nfcExisting=false;loadStudents()}catch(e){$("studentFormMsg").textContent=e.message;$("studentFormMsg").className="msg"}}
+async function removeStudent(id){if(!confirm("이 학원에서 학생을 퇴원 처리할까요? 다른 학원 연결은 유지됩니다."))return;try{await api("/api/v3/admin/students/"+id,{method:"DELETE"});loadStudents()}catch(e){alert(e.message)}}
+async function loadAttendance(){if(!token)return;try{const [y,m]=$("month").value.split("-");const q=$("attQ").value.trim();const xs=await api(`/api/v3/admin/attendance?year=${y}&month=${Number(m)}&q=${encodeURIComponent(q)}`);$("attendanceBody").innerHTML=xs.map(e=>`<tr><td>${new Date(e.occurred_at).toLocaleString("ko-KR")}</td><td>${esc(e.student_name)}</td><td>${esc(e.phone_last4)}</td><td>${e.event_type==="IN"?"입실":"퇴실"}</td><td>${esc(e.source)}</td></tr>`).join("")}catch(e){alert(e.message)}}
+async function changePassword(){try{await api("/api/v3/admin/password",{method:"POST",body:JSON.stringify({current_password:$("currentPw").value,new_password:$("newPw").value})});$("pwMsg").textContent="비밀번호가 변경되었습니다.";$("pwMsg").className="msg ok"}catch(e){$("pwMsg").textContent=e.message;$("pwMsg").className="msg"}}
+init().catch(e=>$("loginMsg").textContent=e.message);
+</script>
+</body></html>"""
+
+@app.get("/admin",response_class=HTMLResponse)
+def admin_web():
+    return ADMIN_WEB_HTML
 
 @app.post("/api/v3/academy-registration/verify")
 async def reg_verify(r:KeyReq):
