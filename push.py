@@ -74,19 +74,31 @@ def _send_fcm(token,title,body,data=None):
         import firebase_admin
         from firebase_admin import credentials,messaging
         if not firebase_admin._apps:
-            path=os.getenv("FIREBASE_CREDENTIALS")
+            path=os.getenv("FIREBASE_CREDENTIALS","").strip()
+
+            # Render Secret File을 firebase-service-account.json 이름으로 만든 경우도 자동 인식.
             if not path:
+                default_path="/etc/secrets/firebase-service-account.json"
+                if os.path.exists(default_path):
+                    path=default_path
+
+            if not path or not os.path.exists(path):
+                print("[FCM] Firebase credentials file not found:", path or "(empty)", flush=True)
                 return False
+
             firebase_admin.initialize_app(credentials.Certificate(path))
-        messaging.send(
+
+        message_id=messaging.send(
             messaging.Message(
                 token=token,
                 notification=messaging.Notification(title=title,body=body),
                 data={str(k):str(v) for k,v in (data or {}).items()}
             )
         )
+        print("[FCM] sent:", message_id, flush=True)
         return True
-    except Exception:
+    except Exception as exc:
+        print("[FCM] send failed:", repr(exc), flush=True)
         return False
 
 def send_push(tokens,title,body,data=None):
