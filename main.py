@@ -456,6 +456,88 @@ def remove_from_academy(student_id:int,delete_global:bool=False,auth=Depends(adm
         db.delete(s); db.commit(); return {"ok":True,"global_deleted":True,"nfc_reusable":True}
     sa.is_active=False; db.commit(); return {"ok":True,"global_deleted":False,"other_academies":other,"nfc_reusable":other==0}
 
+@app.post("/api/v3/admin/attendance/manual")
+def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    if r.event_type not in {"IN","OUT"}:
+        raise HTTPException(400,"입실 또는 퇴실을 선택해주세요.")
+
+    sa=db.scalar(select(StudentAcademy).where(
+        StudentAcademy.student_id==r.student_id,
+        StudentAcademy.academy_id==auth["academy_id"],
+        StudentAcademy.is_active.is_(True)
+    ))
+    student=db.get(Student,r.student_id)
+    if not sa or not student:
+        raise HTTPException(404,"이 학원에 등록된 학생이 아닙니다.")
+
+    occurred=r.occurred_at
+    if occurred.tzinfo is None:
+        occurred=occurred.replace(tzinfo=KST)
+    occurred=occurred.astimezone(timezone.utc)
+
+    now=datetime.now(timezone.utc)
+    if occurred > now + timedelta(minutes=1):
+        raise HTTPException(400,"미래 시간으로 출석을 등록할 수 없습니다.")
+
+    local=occurred.astimezone(KST)
+    if local.minute not in (0,30):
+        raise HTTPException(400,"출석 시간은 30분 단위로 등록해주세요.")
+
+    event=AttendanceEvent(
+        academy_id=auth["academy_id"],
+        student_id=student.id,
+        student_academy_id=sa.id,
+        event_type=r.event_type,
+        source="MANUAL",
+        occurred_at=occurred
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+
+    academy=db.get(Academy,auth["academy_id"])
+    action="입실" if r.event_type=="IN" else "퇴실"
+    elapsed=max(0,int((now-occurred).total_seconds()//60))
+
+    if elapsed < 1:
+        relative=f"방금 {action}했습니다."
+    elif elapsed < 60:
+        relative=f"{elapsed}분 전에 {action}했습니다."
+    else:
+        hours=elapsed//60
+        mins=elapsed%60
+        relative=(f"{hours}시간 {mins}분 전에 {action}했습니다."
+                  if mins else f"{hours}시간 전에 {action}했습니다.")
+
+    when=local.strftime("%H:%M")
+    tokens=list(db.scalars(
+        select(ParentDevice.push_token)
+        .join(ParentLink,ParentLink.device_id==ParentDevice.id)
+        .where(
+            ParentLink.student_id==student.id,
+            ParentLink.academy_id==academy.id,
+            ParentDevice.push_token.is_not(None)
+        )
+    ).all())
+
+    send_push(
+        tokens,
+        academy.name,
+        f"{student.name} 학생이 {relative} (등록시간 {when})",
+        {
+            "student_id":str(student.id),
+            "academy_id":str(academy.id),
+            "event_type":r.event_type,
+            "source":"MANUAL"
+        }
+    )
+
+    return {
+        "ok":True,
+        "message":f"{student.name} 학생 {when} {action} 등록 완료 · 학부모 알림 즉시 전송",
+        "occurred_at":event.occurred_at.isoformat()
+    }
+
 @app.post("/api/v3/attendance/check")
 def attendance(r:AttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     if bool(r.nfc_token) == bool(r.attendance_pin): raise HTTPException(400,"NFC 또는 4자리 출석번호 중 하나만 입력하세요.")
