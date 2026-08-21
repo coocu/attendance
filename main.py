@@ -58,6 +58,7 @@ class KeyReq(BaseModel): license_key:str
 class AcademyCreate(BaseModel): registration_token:str; name:str; region:str; district:str; admin_password:str=Field(min_length=4); recovery_name:str; recovery_phone_last4:str
 class AdminLoginReq(BaseModel): academy_id:int; password:str
 class ParentLoginReq(BaseModel): academy_id:int; name:str; phone_last4:str; extra_code:str|None=None; installation_id:str; platform:str="android"; push_token:str|None=None
+class PushTokenReq(BaseModel): push_token:str
 class ChangePw(BaseModel): current_password:str; new_password:str=Field(min_length=4)
 class RecoveryVerify(BaseModel): academy_id:int; recovery_name:str; recovery_phone_last4:str
 class ResetPw(BaseModel): recovery_token:str; new_password:str=Field(min_length=4)
@@ -544,7 +545,48 @@ def attendance(r:AttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_d
     if r.nfc_token:
         s=db.scalar(select(Student).where(Student.nfc_token==r.nfc_token.strip(),Student.nfc_active.is_(True)))
         if not s: raise HTTPException(404,"등록된 NFC 카드가 아닙니다.")
-        sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==s.id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))); source="NFC"
+        sa=db.scalar(select(StudentAcademy).where(
+            StudentAcademy.student_id==s.id,
+            StudentAcademy.academy_id==auth["academy_id"],
+            StudentAcademy.is_active.is_(True)
+        ))
+        if not sa:
+            # 기존 NFC 학생이 새로운 학원에서 처음 태그하면 자동으로 현재 학원에 연결합니다.
+            used=set(db.scalars(select(StudentAcademy.attendance_pin).where(
+                StudentAcademy.academy_id==auth["academy_id"],
+                StudentAcademy.is_active.is_(True)
+            )).all())
+            pin=str(random.randint(0,9999)).zfill(4)
+            while pin in used:
+                pin=str(random.randint(0,9999)).zfill(4)
+            sa=StudentAcademy(
+                student_id=s.id,
+                academy_id=auth["academy_id"],
+                attendance_pin=pin,
+                memo=""
+            )
+            db.add(sa)
+            db.flush()
+            refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4)
+
+            # 이미 이 학생으로 로그인한 학부모 기기에는 현재 학원을 자동 추가합니다.
+            device_ids=list(db.scalars(
+                select(ParentLink.device_id).where(ParentLink.student_id==s.id).distinct()
+            ).all())
+            for did in device_ids:
+                exists=db.scalar(select(ParentLink).where(
+                    ParentLink.device_id==did,
+                    ParentLink.student_id==s.id,
+                    ParentLink.academy_id==auth["academy_id"]
+                ))
+                if not exists:
+                    db.add(ParentLink(
+                        device_id=did,
+                        student_id=s.id,
+                        academy_id=auth["academy_id"]
+                    ))
+            db.flush()
+        source="NFC"
     else:
         pin=digits(r.attendance_pin or "",4,"출석번호"); row=db.execute(select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))).first()
         if not row: raise HTTPException(404,"등록된 출석번호가 아닙니다.")
@@ -580,6 +622,17 @@ def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
         if not db.scalar(select(ParentLink).where(ParentLink.device_id==d.id,ParentLink.student_id==s.id,ParentLink.academy_id==aid)):
             db.add(ParentLink(device_id=d.id,student_id=s.id,academy_id=aid))
     db.commit(); return {"needs_extra_code":False,"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name,"access_token":token("parent",device_id=d.id)}
+@app.post("/api/v3/parent/device/push-token")
+def update_parent_push_token(r:PushTokenReq,auth=Depends(parent_auth),db:Session=Depends(get_db)):
+    d=db.get(ParentDevice,auth["device_id"])
+    if not d: raise HTTPException(404,"등록된 기기를 찾을 수 없습니다.")
+    value=r.push_token.strip()
+    if not value: raise HTTPException(400,"푸시 토큰이 없습니다.")
+    d.push_token=value
+    d.updated_at=datetime.now(timezone.utc)
+    db.commit()
+    return {"ok":True}
+
 @app.get("/api/v3/parent/links")
 def parent_links(auth=Depends(parent_auth),db:Session=Depends(get_db)):
     rows=db.execute(select(ParentLink,Student,Academy).join(Student,Student.id==ParentLink.student_id).join(Academy,Academy.id==ParentLink.academy_id).where(ParentLink.device_id==auth["device_id"],Academy.is_active.is_(True))).all()
