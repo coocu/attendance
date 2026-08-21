@@ -14,6 +14,19 @@ from security import hash_password,verify_password,token,read_token
 from auth_adapter import verify_license_key,AuthUnavailable
 from push import send_push
 KST=ZoneInfo("Asia/Seoul"); LOCKOUT_SECONDS=600
+
+def to_utc(dt: datetime):
+    if dt.tzinfo is None:
+        # PC/iOS에서 timezone 없이 보낸 값은 한국시간으로 간주
+        dt = dt.replace(tzinfo=KST)
+    return dt.astimezone(timezone.utc)
+
+def to_kst(dt: datetime):
+    if dt.tzinfo is None:
+        # DB의 timezone 없는 값은 UTC로 간주
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(KST)
+
 app=FastAPI(title="CodeNote Attendance V3 API",version="3.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
 @app.on_event("startup")
