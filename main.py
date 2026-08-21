@@ -169,15 +169,15 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <div class="card">
         <div class="between"><div class="section-title">학생 등록 / NFC 확인</div><div class="small">PC에서는 NFC 리더기가 토큰값을 입력할 수 있을 때 등록 가능합니다.</div></div>
         <div class="grid3">
-          <input id="nfcToken" placeholder="NFC 토큰">
+          <div class="small" style="padding:13px 14px;border:1px solid #d7dbe5;border-radius:12px;background:#f9fafb">신규 NFC 등록은 Android 관리자 앱에서 진행합니다.</div>
           <input id="studentName" placeholder="학생 이름">
           <input id="studentPhone" maxlength="4" placeholder="전화번호 뒤 4자리">
           <input id="studentPin" maxlength="4" placeholder="출석번호 4자리">
           <input id="studentMemo" placeholder="관리자 메모">
-          <button class="secondary" onclick="lookupNfc()">NFC 확인</button>
+          <div></div>
         </div>
         <div style="height:10px"></div>
-        <button class="primary" onclick="saveStudent()">학생 등록</button>
+        <button class="secondary" type="button" onclick="document.getElementById('studentFormMsg').textContent='신규 학생은 Android 관리자 앱에서 NFC 카드를 태그하여 등록해주세요.'">신규 학생 등록 안내</button>
         <div id="studentFormMsg" class="msg"></div>
       </div>
       <div class="card">
@@ -267,6 +267,13 @@ def recovery(r:RecoveryVerify,db:Session=Depends(get_db)):
 @app.post("/api/v3/admin/recovery/reset")
 def recovery_reset(r:ResetPw,db:Session=Depends(get_db)):
     d=read_token(r.recovery_token,"recovery",600); c=db.get(AdminCredential,d["academy_id"]); c.password_hash=hash_password(r.new_password); db.commit(); return {"ok":True}
+
+@app.post("/api/v3/admin/nfc/issue-token")
+def issue_nfc_token(auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    while True:
+        value = "CN-" + secrets.token_urlsafe(32)
+        if not db.scalar(select(Student.id).where(Student.nfc_token == value)):
+            return {"nfc_token": value}
 
 @app.post("/api/v3/admin/nfc/lookup")
 def nfc_lookup(r:NfcLookup,auth=Depends(admin_auth),db:Session=Depends(get_db)):
