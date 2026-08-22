@@ -88,6 +88,23 @@ class NfcReplace(BaseModel): new_nfc_token:str
 class AttendanceReq(BaseModel): nfc_token:str|None=None; attendance_pin:str|None=None
 class ManualAttendanceReq(BaseModel): student_id:int; event_type:str; occurred_at:datetime
 class NoticeWrite(BaseModel): management_token:str; notice_type:str; content:str; is_active:bool
+
+# 코드노트 공지 앱(기존 MusyncNotice) 호환용 요청 모델
+class NoticeManagementSaveReq(BaseModel):
+    license_key:str
+    notice_type:str
+    content:str
+
+class NoticeManagementToggleReq(BaseModel):
+    license_key:str
+    notice_type:str
+    enabled:bool
+
+class NoticeManagementApplyReq(BaseModel):
+    license_key:str
+    notice_type:str
+    content:str
+    enabled:bool
 class AcademyUpdate(BaseModel): management_token:str; academy_id:int; name:str|None=None; region:str|None=None; district:str|None=None; is_active:bool|None=None
 class ManageReq(BaseModel): management_token:str; academy_id:int
 
@@ -95,6 +112,68 @@ class ManageReq(BaseModel): management_token:str; academy_id:int
 def health(): return {"ok":True,"service":"codenote-attendance-v3"}
 @app.get("/api/v3/notices")
 def notices(db:Session=Depends(get_db)): return [{"type":n.notice_type,"content":n.content,"is_active":n.is_active} for n in db.scalars(select(Notice)).all()]
+
+# -----------------------------------------------------------------------------
+# 코드노트 공지 앱(MusyncNotice) 기존 API 호환
+# 앱 수정 없이 /api/notice-management/* 경로를 그대로 사용할 수 있게 유지한다.
+# -----------------------------------------------------------------------------
+def _notice_state(db:Session):
+    rows={n.notice_type:n for n in db.scalars(select(Notice)).all()}
+    def item(kind:str):
+        n=rows.get(kind)
+        return {"enabled":bool(n.is_active) if n else False,"content":n.content if n else ""}
+    return {"regular":item("regular"),"emergency":item("emergency")}
+
+async def _verify_notice_management_key(license_key:str):
+    key=license_key.strip()
+    if "kyh" not in key.lower():
+        raise HTTPException(401,"공지관리 권한이 없는 인증키입니다.")
+    try:
+        ok=await verify_license_key(key)
+    except AuthUnavailable as exc:
+        raise HTTPException(503,str(exc)) from exc
+    if not ok:
+        raise HTTPException(401,"인증키를 확인해 주세요.")
+
+def _notice_mutation_response(n:Notice):
+    return {"notice_type":n.notice_type,"enabled":bool(n.is_active),"content":n.content}
+
+def _get_or_create_notice(db:Session,notice_type:str):
+    if notice_type not in {"regular","emergency"}:
+        raise HTTPException(400,"공지 종류가 올바르지 않습니다.")
+    return db.get(Notice,notice_type) or Notice(notice_type=notice_type)
+
+@app.get("/api/notice-management/state")
+def notice_management_state(db:Session=Depends(get_db)):
+    return _notice_state(db)
+
+@app.post("/api/notice-management/save")
+async def notice_management_save(r:NoticeManagementSaveReq,db:Session=Depends(get_db)):
+    await _verify_notice_management_key(r.license_key)
+    n=_get_or_create_notice(db,r.notice_type)
+    n.content=r.content.strip()
+    n.updated_at=now_kst().astimezone(timezone.utc)
+    db.add(n); db.commit(); db.refresh(n)
+    return _notice_mutation_response(n)
+
+@app.post("/api/notice-management/toggle")
+async def notice_management_toggle(r:NoticeManagementToggleReq,db:Session=Depends(get_db)):
+    await _verify_notice_management_key(r.license_key)
+    n=_get_or_create_notice(db,r.notice_type)
+    n.is_active=r.enabled
+    n.updated_at=now_kst().astimezone(timezone.utc)
+    db.add(n); db.commit(); db.refresh(n)
+    return _notice_mutation_response(n)
+
+@app.post("/api/notice-management/apply")
+async def notice_management_apply(r:NoticeManagementApplyReq,db:Session=Depends(get_db)):
+    await _verify_notice_management_key(r.license_key)
+    n=_get_or_create_notice(db,r.notice_type)
+    n.content=r.content.strip()
+    n.is_active=r.enabled
+    n.updated_at=now_kst().astimezone(timezone.utc)
+    db.add(n); db.commit(); db.refresh(n)
+    return _notice_mutation_response(n)
 @app.get("/api/v3/regions")
 def regions(db:Session=Depends(get_db)): return list(db.scalars(select(Academy.region).where(Academy.is_active.is_(True)).distinct().order_by(Academy.region)).all())
 @app.get("/api/v3/districts")
