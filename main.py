@@ -204,7 +204,11 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
           <input id="studentMemo" placeholder="관리자 메모">
         </div>
         <div style="height:10px"></div>
-        <button class="primary" onclick="saveStudentNoNfc()">학생 등록</button>
+        <div class="row">
+          <button class="primary" onclick="saveStudentNoNfc()">학생 등록</button>
+          <button class="secondary" onclick="readExistingStudentNfc()">NFC로 학생 불러오기</button>
+          <button id="cancelStudentNfcImport" class="secondary hidden" onclick="cancelExistingStudentNfc()">NFC 불러오기 취소</button>
+        </div>
         <div id="studentFormMsg" class="msg"></div>
       </div>
       <div class="card">
@@ -587,14 +591,95 @@ async function saveNotice(type){
 }
 function showTab(t){for(const x of ["students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
 async function loadStudents(){if(!token)return;try{const q=$("studentQ").value.trim();const xs=await api("/api/v3/admin/students?q="+encodeURIComponent(q));$("studentsBody").innerHTML=xs.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone_last4)}</td><td>${esc(s.attendance_pin)}</td><td>${esc(s.memo)}</td><td>${s.nfc_registered?'<span class="pill">등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',true)">재등록</button>':'<span class="pill" style="background:#f3f4f6;color:#6b7280">미등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',false)">NFC 등록</button>'}</td><td><div class="row"><button class="secondary" onclick="openManualAttendance(${s.student_id},'${esc(s.name).replace(/'/g,"&#39;")}')">출석등록</button><button class="danger" onclick="removeStudent(${s.student_id})">퇴원</button></div></td></tr>`).join("")}catch(e){alert(e.message)}}
+let studentImportNfcToken="";
+
+async function readExistingStudentNfc(){
+  try{
+    if(!("NDEFReader" in window)){
+      throw new Error("현재 브라우저는 NFC 읽기를 지원하지 않습니다. Android 관리자 앱에서 NFC로 학생을 불러올 수 있습니다.");
+    }
+    $("studentFormMsg").textContent="기존 학생 NFC 카드를 태그해주세요.";
+    $("studentFormMsg").className="msg";
+
+    const ndef=new NDEFReader();
+    await ndef.scan();
+
+    ndef.onreading=async event=>{
+      try{
+        const decoder=new TextDecoder();
+        let tokenValue="";
+        for(const record of event.message.records){
+          if(record.recordType==="mime" || record.recordType==="text"){
+            tokenValue=decoder.decode(record.data);
+            if(tokenValue)break;
+          }
+        }
+        if(!tokenValue)throw new Error("NFC 카드 값을 읽지 못했습니다.");
+
+        const d=await api("/api/v3/admin/nfc/lookup",{
+          method:"POST",
+          body:JSON.stringify({nfc_token:tokenValue})
+        });
+
+        if(!d.exists)throw new Error("등록된 학생 NFC 카드가 아닙니다.");
+        if(d.already_in_academy)throw new Error("이미 이 학원에 등록된 학생입니다.");
+
+        studentImportNfcToken=tokenValue;
+        $("studentName").value=d.name||"";
+        $("studentPhone").value=d.phone_last4||"";
+        $("studentName").readOnly=true;
+        $("studentPhone").readOnly=true;
+        $("cancelStudentNfcImport").classList.remove("hidden");
+        $("studentFormMsg").textContent="기존 학생 정보를 불러왔습니다. 출석번호와 이 학원 메모를 입력 후 학생 등록을 누르세요.";
+        $("studentFormMsg").className="msg ok";
+        ndef.onreading=null;
+      }catch(e){
+        $("studentFormMsg").textContent=e.message;
+        $("studentFormMsg").className="msg";
+      }
+    };
+  }catch(e){
+    $("studentFormMsg").textContent=e.message;
+    $("studentFormMsg").className="msg";
+  }
+}
+
+function cancelExistingStudentNfc(){
+  studentImportNfcToken="";
+  $("studentName").value="";
+  $("studentPhone").value="";
+  $("studentName").readOnly=false;
+  $("studentPhone").readOnly=false;
+  $("cancelStudentNfcImport").classList.add("hidden");
+  $("studentFormMsg").textContent="";
+}
+
 async function saveStudentNoNfc(){try{
   const name=$("studentName").value.trim(),phone=$("studentPhone").value.trim(),pin=$("studentPin").value.trim(),memo=$("studentMemo").value;
   if(!name)throw new Error("학생 이름을 입력해주세요.");
   if(!/^\d{4}$/.test(phone))throw new Error("전화번호 뒤 4자리를 입력해주세요.");
   if(!/^\d{4}$/.test(pin))throw new Error("출석번호 4자리를 입력해주세요.");
-  await api("/api/v3/admin/students/new",{method:"POST",body:JSON.stringify({name,phone_last4:phone,attendance_pin:pin,memo})});
-  $("studentFormMsg").textContent="학생 등록 완료 (NFC 미등록)";$("studentFormMsg").className="msg ok";
-  for(const id of ["studentName","studentPhone","studentPin","studentMemo"])$(id).value="";loadStudents();
+  if(studentImportNfcToken){
+    await api("/api/v3/admin/students/attach-existing",{
+      method:"POST",
+      body:JSON.stringify({
+        nfc_token:studentImportNfcToken,
+        attendance_pin:pin,
+        memo:memo
+      })
+    });
+    $("studentFormMsg").textContent="NFC 기존 학생 등록 완료";
+    $("studentName").readOnly=false;
+    $("studentPhone").readOnly=false;
+    studentImportNfcToken="";
+    $("cancelStudentNfcImport").classList.add("hidden");
+  }else{
+    await api("/api/v3/admin/students/new",{method:"POST",body:JSON.stringify({name,phone_last4:phone,attendance_pin:pin,memo})});
+    $("studentFormMsg").textContent="학생 등록 완료 (NFC 미등록)";
+  }
+  $("studentFormMsg").className="msg ok";
+  for(const id of ["studentName","studentPhone","studentPin","studentMemo"])$(id).value="";
+  loadStudents();
 }catch(e){$("studentFormMsg").textContent=e.message;$("studentFormMsg").className="msg"}}
 async function prepareStudentNfc(studentId,replacing){try{
   if(replacing && !confirm("새 NFC 등록을 시작하면 분실한 기존 NFC는 즉시 사용할 수 없게 됩니다. 계속할까요?"))return;
