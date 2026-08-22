@@ -88,11 +88,92 @@ class NfcReplace(BaseModel): new_nfc_token:str
 class AttendanceReq(BaseModel): nfc_token:str|None=None; attendance_pin:str|None=None
 class ManualAttendanceReq(BaseModel): student_id:int; event_type:str; occurred_at:datetime
 class NoticeWrite(BaseModel): management_token:str; notice_type:str; content:str; is_active:bool
+class NoticeManagementSave(BaseModel): license_key:str; notice_type:str; content:str
+class NoticeManagementToggle(BaseModel): license_key:str; notice_type:str; enabled:bool
+class NoticeManagementApply(BaseModel): license_key:str; notice_type:str; content:str; enabled:bool
 class AcademyUpdate(BaseModel): management_token:str; academy_id:int; name:str|None=None; region:str|None=None; district:str|None=None; is_active:bool|None=None
 class ManageReq(BaseModel): management_token:str; academy_id:int
 
 @app.get("/health")
 def health(): return {"ok":True,"service":"codenote-attendance-v3"}
+def _notice_type(value:str):
+    value=value.strip().lower()
+    if value not in ("regular","emergency"):
+        raise HTTPException(400,"공지 종류가 올바르지 않습니다.")
+    return value
+
+async def _verify_notice_license(license_key:str):
+    key=license_key.strip()
+    if not key:
+        raise HTTPException(400,"인증키를 입력해주세요.")
+    try:
+        ok=await verify_license_key(key)
+    except AuthUnavailable as e:
+        raise HTTPException(503,str(e))
+    if not ok:
+        raise HTTPException(401,"유효하지 않은 인증키입니다.")
+
+def _notice_state(db:Session):
+    result={}
+    for notice_type in ("regular","emergency"):
+        n=db.get(Notice,notice_type)
+        if n is None:
+            n=Notice(notice_type=notice_type,content="",is_active=False)
+            db.add(n)
+            db.flush()
+        result[notice_type]={"enabled":bool(n.is_active),"content":n.content or ""}
+    return result
+
+def _notice_response(n:Notice):
+    return {"notice_type":n.notice_type,"enabled":bool(n.is_active),"content":n.content or ""}
+
+@app.get("/api/notice-management/state")
+def notice_management_state(db:Session=Depends(get_db)):
+    return _notice_state(db)
+
+@app.post("/api/notice-management/save")
+async def notice_management_save(r:NoticeManagementSave,db:Session=Depends(get_db)):
+    await _verify_notice_license(r.license_key)
+    t=_notice_type(r.notice_type)
+    n=db.get(Notice,t)
+    if n is None:
+        n=Notice(notice_type=t,content="",is_active=False)
+        db.add(n)
+    n.content=r.content
+    n.updated_at=datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(n)
+    return _notice_response(n)
+
+@app.post("/api/notice-management/toggle")
+async def notice_management_toggle(r:NoticeManagementToggle,db:Session=Depends(get_db)):
+    await _verify_notice_license(r.license_key)
+    t=_notice_type(r.notice_type)
+    n=db.get(Notice,t)
+    if n is None:
+        n=Notice(notice_type=t,content="",is_active=False)
+        db.add(n)
+    n.is_active=r.enabled
+    n.updated_at=datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(n)
+    return _notice_response(n)
+
+@app.post("/api/notice-management/apply")
+async def notice_management_apply(r:NoticeManagementApply,db:Session=Depends(get_db)):
+    await _verify_notice_license(r.license_key)
+    t=_notice_type(r.notice_type)
+    n=db.get(Notice,t)
+    if n is None:
+        n=Notice(notice_type=t,content="",is_active=False)
+        db.add(n)
+    n.content=r.content
+    n.is_active=r.enabled
+    n.updated_at=datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(n)
+    return _notice_response(n)
+
 @app.get("/api/v3/notices")
 def notices(db:Session=Depends(get_db)): return [{"type":n.notice_type,"content":n.content,"is_active":n.is_active} for n in db.scalars(select(Notice)).all()]
 @app.get("/api/v3/regions")
@@ -330,28 +411,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       </div>
 
       <div id="managementContent" class="hidden" style="margin-top:18px">
-        <div class="card" style="box-shadow:none">
-          <div class="section-title">공지 관리</div>
-          <div class="grid">
-            <div>
-              <div class="small" style="margin-bottom:6px">일반공지</div>
-              <textarea id="regularNotice" placeholder="일반공지 내용"></textarea>
-              <label class="small"><input id="regularNoticeActive" type="checkbox"> 활성화</label>
-              <div style="height:8px"></div>
-              <button class="secondary" onclick="saveNotice('regular')">일반공지 저장</button>
-            </div>
-            <div>
-              <div class="small" style="margin-bottom:6px">긴급공지</div>
-              <textarea id="emergencyNotice" placeholder="긴급공지 내용"></textarea>
-              <label class="small"><input id="emergencyNoticeActive" type="checkbox"> 활성화</label>
-              <div style="height:8px"></div>
-              <button class="secondary" onclick="saveNotice('emergency')">긴급공지 저장</button>
-            </div>
-          </div>
-          <div id="noticeMsg" class="msg"></div>
-        </div>
-
-        <div class="card" style="box-shadow:none">
+<div class="card" style="box-shadow:none">
           <div class="between">
             <div class="section-title" style="margin:0">등록 학원</div>
             <input id="managementSearch" style="max-width:320px" placeholder="학원 검색" oninput="renderManagementAcademies()">
