@@ -243,11 +243,15 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <div class="grid">
         <div>
           <div class="small" style="margin-bottom:6px">지역</div>
-          <input id="editManagedAcademyRegion" placeholder="지역">
+          <select id="editManagedAcademyRegion" onchange="loadEditManagedDistricts()">
+            <option value="">지역 선택</option>
+          </select>
         </div>
         <div>
           <div class="small" style="margin-bottom:6px">시·군·구</div>
-          <input id="editManagedAcademyDistrict" placeholder="시·군·구">
+          <select id="editManagedAcademyDistrict">
+            <option value="">시·군·구 선택</option>
+          </select>
         </div>
       </div>
       <div id="editManagedAcademyMsg" class="msg"></div>
@@ -444,15 +448,52 @@ function renderManagementAcademies(){
       </td>
     </tr>`).join("");
 }
-function openManagedAcademyEdit(id){
+async function openManagedAcademyEdit(id){
   const a=managementAcademies.find(x=>x.id===id);
   if(!a)return;
+
   $("editManagedAcademyId").value=String(a.id);
   $("editManagedAcademyName").value=a.name||"";
-  $("editManagedAcademyRegion").value=a.region||"";
-  $("editManagedAcademyDistrict").value=a.district||"";
   $("editManagedAcademyMsg").textContent="";
-  $("editManagedAcademyBox").classList.remove("hidden");
+
+  try{
+    const regions=await api("/api/v3/regions");
+    $("editManagedAcademyRegion").innerHTML=
+      '<option value="">지역 선택</option>'+
+      regions.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("");
+
+    $("editManagedAcademyRegion").value=a.region||"";
+    await loadEditManagedDistricts(a.district||"");
+
+    $("editManagedAcademyBox").classList.remove("hidden");
+  }catch(e){
+    $("managementMsg").textContent=e.message;
+    $("managementMsg").className="msg";
+  }
+}
+
+async function loadEditManagedDistricts(selectedDistrict=""){
+  const region=$("editManagedAcademyRegion").value;
+  const select=$("editManagedAcademyDistrict");
+
+  if(!region){
+    select.innerHTML='<option value="">시·군·구 선택</option>';
+    return;
+  }
+
+  try{
+    const districts=await api("/api/v3/districts?region="+encodeURIComponent(region));
+    select.innerHTML=
+      '<option value="">시·군·구 선택</option>'+
+      districts.map(d=>`<option value="${esc(d)}">${esc(d)}</option>`).join("");
+
+    if(selectedDistrict){
+      select.value=selectedDistrict;
+    }
+  }catch(e){
+    select.innerHTML='<option value="">시·군·구 선택</option>';
+    $("editManagedAcademyMsg").textContent=e.message;
+  }
 }
 function closeManagedAcademyEdit(){
   $("editManagedAcademyBox").classList.add("hidden");
@@ -461,15 +502,28 @@ function closeManagedAcademyEdit(){
 async function saveManagedAcademyEdit(){
   const id=Number($("editManagedAcademyId").value);
   const current=managementAcademies.find(x=>x.id===id);
+  const name=$("editManagedAcademyName").value.trim();
+  const region=$("editManagedAcademyRegion").value;
+  const district=$("editManagedAcademyDistrict").value;
+
+  if(!name){
+    $("editManagedAcademyMsg").textContent="학원 이름을 입력해주세요.";
+    return;
+  }
+  if(!region || !district){
+    $("editManagedAcademyMsg").textContent="지역과 시·군·구를 선택해주세요.";
+    return;
+  }
+
   try{
     await api("/api/v3/academy-management/update",{
       method:"POST",
       body:JSON.stringify({
         management_token:academyManagementToken,
         academy_id:id,
-        name:$("editManagedAcademyName").value.trim(),
-        region:$("editManagedAcademyRegion").value.trim(),
-        district:$("editManagedAcademyDistrict").value.trim(),
+        name:name,
+        region:region,
+        district:district,
         is_active:current?current.is_active:true
       })
     });
