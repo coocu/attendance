@@ -285,7 +285,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
         <div class="between"><div class="section-title">학생 등록</div><div class="small">NFC 카드가 없어도 먼저 등록할 수 있습니다. NFC는 학생 목록에서 나중에 등록/재등록할 수 있습니다.</div></div>
         <div class="grid3">
           <input id="studentName" placeholder="학생 이름">
-          <input id="studentPhone" maxlength="4" inputmode="numeric" placeholder="전화번호 뒤 4자리">
+          <input id="studentPhone" maxlength="11" inputmode="numeric" placeholder="보호자 전화번호 11자리 (01012345678)">
           <input id="studentPin" maxlength="4" inputmode="numeric" placeholder="출석번호 4자리">
           <input id="studentMemo" placeholder="관리자 메모">
         </div>
@@ -343,7 +343,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
         </div>
         <div>
           <div class="small" style="margin-bottom:6px">전화번호 뒷4자리</div>
-          <input id="editStudentPhone" maxlength="4" inputmode="numeric" placeholder="전화번호 뒷4자리">
+          <input id="editStudentPhone" maxlength="11" inputmode="numeric" placeholder="보호자 전화번호 11자리 (01012345678)">
         </div>
       </div>
 
@@ -561,6 +561,10 @@ async function resetPasswordNow(){try{
   $("forgotMsg").className="msg";
 }}
 
+function formatGuardianPhone(v){
+  const d=String(v||"").replace(/\D/g,"").slice(0,11);
+  return d.length===11?`${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`:d;
+}
 function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
 
 let adminRegularNotice=null;
@@ -842,7 +846,7 @@ async function loadStudents(){
     currentStudents=xs;
     $("studentsBody").innerHTML=xs.map(s=>`<tr>
       <td>${esc(s.name)}</td>
-      <td>${esc(s.phone_last4)}</td>
+      <td>${esc(formatGuardianPhone(s.phone_last4))}</td>
       <td>${esc(s.attendance_pin)}</td>
       <td>${esc(s.memo)}</td>
       <td>${s.nfc_registered
@@ -892,7 +896,7 @@ async function saveStudentEdit(confirmGlobal){
     const originalPhone=$("editStudentOriginalPhone").value;
 
     if(!name)throw new Error("학생 이름을 입력해주세요.");
-    if(!/^\d{4}$/.test(phone))throw new Error("전화번호 뒷4자리를 입력해주세요.");
+    if(!/^\d{11}$/.test(phone))throw new Error("보호자 전화번호 11자리를 입력해주세요.");
     if(!/^\d{4}$/.test(pin))throw new Error("출석번호 4자리를 입력해주세요.");
 
     const globalChanged=(name!==originalName || phone!==originalPhone);
@@ -1000,7 +1004,7 @@ function cancelExistingStudentNfc(){
 async function saveStudentNoNfc(){try{
   const name=$("studentName").value.trim(),phone=$("studentPhone").value.trim(),pin=$("studentPin").value.trim(),memo=$("studentMemo").value;
   if(!name)throw new Error("학생 이름을 입력해주세요.");
-  if(!/^\d{4}$/.test(phone))throw new Error("전화번호 뒤 4자리를 입력해주세요.");
+  if(!/^\d{11}$/.test(phone))throw new Error("보호자 전화번호 11자리를 입력해주세요.");
   if(!/^\d{4}$/.test(pin))throw new Error("출석번호 4자리를 입력해주세요.");
   if(studentImportNfcToken){
     await api("/api/v3/admin/students/attach-existing",{
@@ -1232,27 +1236,39 @@ def attach_existing_by_identity(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Se
     if not s:
         raise HTTPException(404,"동일한 이름과 보호자 전화번호로 등록된 기존 학생이 없습니다.")
 
-    if db.scalar(select(StudentAcademy).where(
+    existing_link=db.scalar(select(StudentAcademy).where(
         StudentAcademy.student_id==s.id,
-        StudentAcademy.academy_id==auth["academy_id"],
-        StudentAcademy.is_active.is_(True)
-    )):
+        StudentAcademy.academy_id==auth["academy_id"]
+    ))
+
+    if existing_link and existing_link.is_active:
         raise HTTPException(409,"이미 이 학원에 등록된 학생입니다.")
 
-    if db.scalar(select(StudentAcademy).where(
+    pin_owner=db.scalar(select(StudentAcademy).where(
         StudentAcademy.academy_id==auth["academy_id"],
         StudentAcademy.attendance_pin==pin,
-        StudentAcademy.is_active.is_(True)
-    )):
+        StudentAcademy.is_active.is_(True),
+        StudentAcademy.student_id!=s.id
+    ))
+    if pin_owner:
         raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
 
-    sa=StudentAcademy(
-        student_id=s.id,
-        academy_id=auth["academy_id"],
-        attendance_pin=pin,
-        memo=r.memo.strip()
-    )
-    db.add(sa)
+    if existing_link:
+        # 과거에 퇴원/비활성 처리된 같은 학생-학원 연결이 있으면 새 행을 만들지 않고 복구합니다.
+        existing_link.attendance_pin=pin
+        existing_link.memo=r.memo.strip()
+        existing_link.is_active=True
+        existing_link.login_extra_code=None
+        sa=existing_link
+    else:
+        sa=StudentAcademy(
+            student_id=s.id,
+            academy_id=auth["academy_id"],
+            attendance_pin=pin,
+            memo=r.memo.strip()
+        )
+        db.add(sa)
+
     db.flush()
 
     refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4)
