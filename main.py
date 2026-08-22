@@ -177,11 +177,11 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <button class="secondary" onclick="verifyRecovery()">본인 확인</button>
       <div id="resetBox" class="hidden" style="margin-top:12px">
         <div class="grid">
-          <input id="resetPassword" type="password" placeholder="새 관리자 비밀번호">
-          <input id="resetPassword2" type="password" placeholder="새 관리자 비밀번호 확인">
+          <input id="resetPassword" type="password" placeholder="비밀번호 재설정">
+          <input id="resetPassword2" type="password" placeholder="재설정 확인">
         </div>
         <div style="height:10px"></div>
-        <button class="primary" onclick="resetPasswordNow()">비밀번호 재설정</button>
+        <button class="primary" onclick="resetPasswordNow()">변경</button>
       </div>
       <div id="forgotMsg" class="msg"></div>
       <div style="height:10px"></div>
@@ -417,7 +417,32 @@ async function verifyRecovery(){try{
   $("forgotMsg").textContent=e.message;
   $("forgotMsg").className="msg";
 }}
-async function resetPasswordNow(){try{if(!recoveryToken)throw new Error("먼저 본인 확인을 해주세요.");const p=$("resetPassword").value,p2=$("resetPassword2").value;if(p.length<4)throw new Error("새 비밀번호는 4자리 이상 입력해주세요.");if(p!==p2)throw new Error("새 비밀번호가 일치하지 않습니다.");await api("/api/v3/admin/recovery/reset",{method:"POST",body:JSON.stringify({recovery_token:recoveryToken,new_password:p})});$("forgotMsg").textContent="관리자 비밀번호가 변경되었습니다.";$("forgotMsg").className="msg ok";recoveryToken="";$("resetBox").classList.add("hidden");$("password").value=""}catch(e){$("forgotMsg").textContent=e.message;$("forgotMsg").className="msg"}}
+async function resetPasswordNow(){try{
+  if(!recoveryToken)throw new Error("먼저 본인 확인을 해주세요.");
+  const p=$("resetPassword").value;
+  const p2=$("resetPassword2").value;
+  if(p.length<4)throw new Error("비밀번호는 4자리 이상 입력해주세요.");
+  if(p!==p2)throw new Error("재설정 비밀번호가 일치하지 않습니다.");
+
+  await api("/api/v3/admin/recovery/reset",{
+    method:"POST",
+    body:JSON.stringify({
+      recovery_token:recoveryToken,
+      new_password:p
+    })
+  });
+
+  recoveryToken="";
+  $("password").value="";
+  $("resetPassword").value="";
+  $("resetPassword2").value="";
+  $("forgotMsg").textContent="";
+  $("resetBox").classList.add("hidden");
+  $("forgotBox").classList.add("hidden"); // 변경 성공 즉시 비밀번호 찾기 창 닫기
+}catch(e){
+  $("forgotMsg").textContent=e.message;
+  $("forgotMsg").className="msg";
+}}
 
 function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
 
