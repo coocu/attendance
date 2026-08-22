@@ -584,11 +584,13 @@ function adminNoticeTodayKey(){
 }
 
 function regularNoticeHiddenToday(){
-  return localStorage.getItem("attendance_regular_notice_hidden_date")===adminNoticeTodayKey();
+  const academyKey=academyId?String(academyId):"global";
+  return localStorage.getItem(`attendance_regular_notice_hidden_date_${academyKey}`)===adminNoticeTodayKey();
 }
 
 function hideRegularNoticeToday(){
-  localStorage.setItem("attendance_regular_notice_hidden_date",adminNoticeTodayKey());
+  const academyKey=academyId?String(academyId):"global";
+  localStorage.setItem(`attendance_regular_notice_hidden_date_${academyKey}`,adminNoticeTodayKey());
 }
 
 async function showAdminNoticeIfNeeded(){
