@@ -236,6 +236,50 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
     </section>
   </div>
 
+  <div id="editStudentBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:74;padding:24px;display:flex;align-items:center;justify-content:center">
+    <div class="card" style="width:min(520px,100%);margin:0">
+      <div class="between">
+        <div>
+          <div class="section-title" style="margin:0">학생정보 수정</div>
+          <div class="small">이름·전화번호 변경은 전체 서버의 동일 학생 정보에 반영됩니다.</div>
+        </div>
+        <button class="secondary" onclick="closeStudentEdit()">닫기</button>
+      </div>
+
+      <input id="editStudentId" type="hidden">
+      <input id="editStudentOriginalName" type="hidden">
+      <input id="editStudentOriginalPhone" type="hidden">
+
+      <div style="height:14px"></div>
+      <div class="grid">
+        <div>
+          <div class="small" style="margin-bottom:6px">학생 이름</div>
+          <input id="editStudentName" placeholder="학생 이름">
+        </div>
+        <div>
+          <div class="small" style="margin-bottom:6px">전화번호 뒷4자리</div>
+          <input id="editStudentPhone" maxlength="4" inputmode="numeric" placeholder="전화번호 뒷4자리">
+        </div>
+      </div>
+
+      <div style="height:10px"></div>
+      <div class="grid">
+        <div>
+          <div class="small" style="margin-bottom:6px">출석번호 4자리</div>
+          <input id="editStudentPin" maxlength="4" inputmode="numeric" placeholder="출석번호 4자리">
+        </div>
+        <div>
+          <div class="small" style="margin-bottom:6px">관리자 메모</div>
+          <input id="editStudentMemo" placeholder="관리자 메모">
+        </div>
+      </div>
+
+      <div id="editStudentMsg" class="msg"></div>
+      <div style="height:14px"></div>
+      <button class="primary" style="width:100%" onclick="saveStudentEdit(false)">수정 완료</button>
+    </div>
+  </div>
+
   <div id="editManagedAcademyBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:75;padding:24px;display:flex;align-items:center;justify-content:center">
     <div class="card" style="width:min(520px,100%);margin:0">
       <div class="between">
@@ -639,7 +683,107 @@ async function saveNotice(type){
   }catch(e){$("noticeMsg").textContent=e.message;$("noticeMsg").className="msg"}
 }
 function showTab(t){for(const x of ["students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
-async function loadStudents(){if(!token)return;try{const q=$("studentQ").value.trim();const xs=await api("/api/v3/admin/students?q="+encodeURIComponent(q));$("studentsBody").innerHTML=xs.map(s=>`<tr><td>${esc(s.name)}</td><td>${esc(s.phone_last4)}</td><td>${esc(s.attendance_pin)}</td><td>${esc(s.memo)}</td><td>${s.nfc_registered?'<span class="pill">등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',true)">재등록</button>':'<span class="pill" style="background:#f3f4f6;color:#6b7280">미등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',false)">NFC 등록</button>'}</td><td><div class="row"><button class="secondary" onclick="openManualAttendance(${s.student_id},'${esc(s.name).replace(/'/g,"&#39;")}')">출석등록</button><button class="danger" onclick="removeStudent(${s.student_id})">퇴원</button></div></td></tr>`).join("")}catch(e){alert(e.message)}}
+let currentStudents=[];
+async function loadStudents(){
+  if(!token)return;
+  try{
+    const q=$("studentQ").value.trim();
+    const xs=await api("/api/v3/admin/students?q="+encodeURIComponent(q));
+    currentStudents=xs;
+    $("studentsBody").innerHTML=xs.map(s=>`<tr>
+      <td>${esc(s.name)}</td>
+      <td>${esc(s.phone_last4)}</td>
+      <td>${esc(s.attendance_pin)}</td>
+      <td>${esc(s.memo)}</td>
+      <td>${s.nfc_registered
+        ? '<span class="pill">등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',true)">재등록</button>'
+        : '<span class="pill" style="background:#f3f4f6;color:#6b7280">미등록</span> <button class="secondary" onclick="prepareStudentNfc('+s.student_id+',false)">NFC 등록</button>'
+      }</td>
+      <td>
+        <div class="row">
+          <button class="secondary" onclick="openStudentEdit(${s.student_id})">수정</button>
+          <button class="secondary" onclick="openManualAttendance(${s.student_id},'${esc(s.name).replace(/'/g,"&#39;")}')">출석등록</button>
+          <button class="danger" onclick="removeStudent(${s.student_id})">퇴원</button>
+        </div>
+      </td>
+    </tr>`).join("");
+  }catch(e){
+    alert(e.message)
+  }
+}
+function openStudentEdit(studentId){
+  const s=currentStudents.find(x=>x.student_id===studentId);
+  if(!s)return;
+
+  $("editStudentId").value=String(s.student_id);
+  $("editStudentOriginalName").value=s.name||"";
+  $("editStudentOriginalPhone").value=s.phone_last4||"";
+  $("editStudentName").value=s.name||"";
+  $("editStudentPhone").value=s.phone_last4||"";
+  $("editStudentPin").value=s.attendance_pin||"";
+  $("editStudentMemo").value=s.memo||"";
+  $("editStudentMsg").textContent="";
+  $("editStudentBox").classList.remove("hidden");
+}
+
+function closeStudentEdit(){
+  $("editStudentBox").classList.add("hidden");
+  $("editStudentMsg").textContent="";
+}
+
+async function saveStudentEdit(confirmGlobal){
+  try{
+    const id=Number($("editStudentId").value);
+    const name=$("editStudentName").value.trim();
+    const phone=$("editStudentPhone").value.trim();
+    const pin=$("editStudentPin").value.trim();
+    const memo=$("editStudentMemo").value;
+    const originalName=$("editStudentOriginalName").value;
+    const originalPhone=$("editStudentOriginalPhone").value;
+
+    if(!name)throw new Error("학생 이름을 입력해주세요.");
+    if(!/^\d{4}$/.test(phone))throw new Error("전화번호 뒷4자리를 입력해주세요.");
+    if(!/^\d{4}$/.test(pin))throw new Error("출석번호 4자리를 입력해주세요.");
+
+    const globalChanged=(name!==originalName || phone!==originalPhone);
+
+    if(globalChanged && !confirmGlobal){
+      const ok=confirm(
+        "이름 또는 전화번호를 변경하면 이 학생의 정보가 전체 서버에 반영됩니다.\n\n"+
+        "다른 학원에 등록된 동일 학생의 이름/전화번호도 함께 변경됩니다.\n\n계속하시겠습니까?"
+      );
+      if(!ok)return;
+      confirmGlobal=true;
+    }
+
+    await api("/api/v3/admin/students/"+id,{
+      method:"PUT",
+      body:JSON.stringify({
+        name:name,
+        phone_last4:phone,
+        attendance_pin:pin,
+        memo:memo,
+        confirm_global:confirmGlobal
+      })
+    });
+
+    closeStudentEdit();
+    await loadStudents();
+  }catch(e){
+    if(String(e.message).includes("GLOBAL_CONFIRM_REQUIRED")){
+      const ok=confirm(
+        "이름 또는 전화번호 변경은 전체 서버의 동일 학생 정보에 반영됩니다.\n계속하시겠습니까?"
+      );
+      if(ok){
+        await saveStudentEdit(true);
+      }
+      return;
+    }
+    $("editStudentMsg").textContent=e.message;
+    $("editStudentMsg").className="msg";
+  }
+}
+
 let studentImportNfcToken="";
 
 async function readExistingStudentNfc(){
@@ -913,7 +1057,7 @@ def edit_student(student_id:int,r:EditStudent,auth=Depends(admin_auth),db:Sessio
     if dup: raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
     links=db.scalar(select(func.count()).select_from(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.is_active.is_(True))) or 0
     global_changed=(s.name!=r.name.strip() or s.phone_last4!=phone)
-    if global_changed and links>1 and not r.confirm_global: raise HTTPException(409,"GLOBAL_CONFIRM_REQUIRED")
+    if global_changed and not r.confirm_global: raise HTTPException(409,"GLOBAL_CONFIRM_REQUIRED")
     old_name,old_phone=s.name,s.phone_last4; s.name=r.name.strip(); s.phone_last4=phone; s.updated_at=now_kst().astimezone(timezone.utc); sa.attendance_pin=pin; sa.memo=r.memo.strip(); refresh_duplicate_codes(db,auth["academy_id"],old_name,old_phone); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit(); return {"ok":True,"global_updated":global_changed,"linked_academies":links}
 @app.post("/api/v3/admin/students/{student_id}/replace-nfc")
 def replace_nfc(student_id:int,r:NfcReplace,auth=Depends(admin_auth),db:Session=Depends(get_db)):
