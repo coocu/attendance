@@ -215,7 +215,8 @@ textarea{min-height:80px;resize:vertical}button{border:0;border-radius:12px;padd
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid #eee;font-size:14px}th{color:#6b7280}
 .pill{display:inline-block;padding:4px 9px;border-radius:999px;background:#eef2ff;color:#395ad7;font-size:12px}
 .small{font-size:13px;color:var(--muted)}.section-title{font-size:18px;font-weight:800;margin:0 0 14px}
-@media(max-width:720px){.grid,.grid3{grid-template-columns:1fr}.between{align-items:flex-start;flex-direction:column}.tablewrap{overflow:auto}}
+.att-calendar{margin-top:16px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}.att-week,.att-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.att-week div{padding:9px 4px;text-align:center;font-size:12px;font-weight:700;color:var(--muted);background:#fafbff;border-bottom:1px solid var(--line)}.att-day{min-height:72px;padding:7px;border:0;border-right:1px solid #f0f1f5;border-bottom:1px solid #f0f1f5;border-radius:0;background:#fff;color:var(--text);text-align:left}.att-day.empty{background:#fafafa;cursor:default}.att-day.selected{background:#eef2ff;box-shadow:inset 0 0 0 2px var(--blue)}.att-day.today .att-num{color:var(--blue);font-weight:900}.att-num{font-weight:700}.att-count{display:block;margin-top:7px;font-size:11px;color:var(--blue);font-weight:700}.att-selected-title{font-size:15px;font-weight:800;margin:16px 0 8px}
+@media(max-width:720px){.grid,.grid3{grid-template-columns:1fr}.between{align-items:flex-start;flex-direction:column}.tablewrap{overflow:auto}.att-day{min-height:60px;padding:5px}.att-count{font-size:10px}}
 </style>
 </head>
 <body>
@@ -301,7 +302,9 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 
     <section id="attendancePanel" class="hidden">
       <div class="card">
-        <div class="between"><div class="section-title">월별 출석현황</div><div class="row"><input id="month" type="month"><input id="attQ" placeholder="이름/전화 검색"><button class="secondary" onclick="loadAttendance()">조회</button></div></div>
+        <div class="between"><div class="section-title">월별 출석현황</div><div class="row"><input id="month" type="month" onchange="attendanceMonthChanged()"><input id="attQ" placeholder="이름/전화 검색"><button class="secondary" onclick="loadAttendance()">조회</button></div></div>
+        <div id="attendanceCalendar" class="att-calendar"></div>
+        <div id="attendanceSelectedTitle" class="att-selected-title"></div>
         <div class="tablewrap"><table><thead><tr><th>시간</th><th>학생</th><th>전화 뒤4</th><th>상태</th><th>방식</th><th></th></tr></thead><tbody id="attendanceBody"></tbody></table></div>
       </div>
     </section>
@@ -1056,7 +1059,38 @@ function confirmSentSuccess(){
   $("sentSuccessBox").classList.add("hidden");
   closeManualAttendance();
 }
-async function loadAttendance(){if(!token)return;try{const [y,m]=$("month").value.split("-");const q=$("attQ").value.trim();const xs=await api(`/api/v3/admin/attendance?year=${y}&month=${Number(m)}&q=${encodeURIComponent(q)}`);$("attendanceBody").innerHTML=xs.map(e=>`<tr><td>${new Date(e.occurred_at).toLocaleString("ko-KR")}</td><td>${esc(e.student_name)}</td><td>${esc(e.phone_last4)}</td><td>${e.event_type==="IN"?"입실":"퇴실"}</td><td>${esc(e.source)}</td><td><button class="danger" onclick="deleteAttendance(${e.id})">삭제</button></td></tr>`).join("")}catch(e){alert(e.message)}}
+let attendanceRows=[];
+let selectedAttendanceDate="";
+function kstDateKey(value){
+  const d=value instanceof Date?value:new Date(value);
+  const parts=new Intl.DateTimeFormat("ko-KR",{timeZone:"Asia/Seoul",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(d);
+  const y=parts.find(x=>x.type==="year").value,m=parts.find(x=>x.type==="month").value,day=parts.find(x=>x.type==="day").value;
+  return `${y}-${m}-${day}`;
+}
+function todayKst(){return kstDateKey(new Date())}
+function attendanceMonthChanged(){
+  const ym=$("month").value;
+  if(!ym)return;
+  selectedAttendanceDate=(ym===todayKst().slice(0,7))?todayKst():`${ym}-01`;
+  loadAttendance();
+}
+function selectAttendanceDate(dateKey){selectedAttendanceDate=dateKey;renderAttendanceCalendar();renderAttendanceTable()}
+function renderAttendanceCalendar(){
+  const ym=$("month").value;if(!ym)return;
+  const [y,m]=ym.split("-").map(Number);
+  const first=new Date(y,m-1,1);const days=new Date(y,m,0).getDate();const start=first.getDay();
+  const counts={};attendanceRows.forEach(e=>{const k=kstDateKey(e.occurred_at);counts[k]=(counts[k]||0)+1});
+  let cells="";for(let i=0;i<start;i++)cells+='<button class="att-day empty" disabled></button>';
+  for(let d=1;d<=days;d++){const key=`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;const c=counts[key]||0;const cls=`att-day${key===selectedAttendanceDate?" selected":""}${key===todayKst()?" today":""}`;cells+=`<button class="${cls}" onclick="selectAttendanceDate('${key}')"><span class="att-num">${d}</span>${c?`<span class="att-count">출석 ${c}건</span>`:""}</button>`}
+  $("attendanceCalendar").innerHTML='<div class="att-week"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div><div class="att-days">'+cells+'</div>';
+}
+function renderAttendanceTable(){
+  if(!selectedAttendanceDate){$("attendanceBody").innerHTML="";return}
+  const xs=attendanceRows.filter(e=>kstDateKey(e.occurred_at)===selectedAttendanceDate);
+  const [y,m,d]=selectedAttendanceDate.split("-");$("attendanceSelectedTitle").textContent=`${Number(y)}년 ${Number(m)}월 ${Number(d)}일 출석현황 (${xs.length}건)`;
+  $("attendanceBody").innerHTML=xs.length?xs.map(e=>`<tr><td>${new Date(e.occurred_at).toLocaleString("ko-KR",{timeZone:"Asia/Seoul"})}</td><td>${esc(e.student_name)}</td><td>${esc(e.phone_last4)}</td><td>${e.event_type==="IN"?"입실":"퇴실"}</td><td>${esc(e.source)}</td><td><button class="danger" onclick="deleteAttendance(${e.id})">삭제</button></td></tr>`).join(""):'<tr><td colspan="6" class="small">선택한 날짜의 출석 기록이 없습니다.</td></tr>';
+}
+async function loadAttendance(){if(!token)return;try{const [y,m]=$("month").value.split("-");const q=$("attQ").value.trim();attendanceRows=await api(`/api/v3/admin/attendance?year=${y}&month=${Number(m)}&q=${encodeURIComponent(q)}`);if(!selectedAttendanceDate||!selectedAttendanceDate.startsWith(`${y}-${String(Number(m)).padStart(2,"0")}`))selectedAttendanceDate=($("month").value===todayKst().slice(0,7))?todayKst():`${y}-${String(Number(m)).padStart(2,"0")}-01`;renderAttendanceCalendar();renderAttendanceTable()}catch(e){alert(e.message)}}
 async function deleteAttendance(id){
   if(!confirm("이 출석기록을 삭제하시겠습니까?"))return;
   try{
