@@ -701,7 +701,7 @@ def manage_update(r:AcademyUpdate,db:Session=Depends(get_db)):
     if r.is_active is not None:a.is_active=r.is_active
     db.commit(); return {"ok":True}
 @app.post("/api/v3/academy-management/delete")
-def academy_management_delete(r:AcademyManagementDeleteReq,db:Session=Depends(get_db)):
+def academy_management_delete(r:ManageReq,db:Session=Depends(get_db)):
     read_token(r.management_token,"academy_management",60*30)
     academy=db.get(Academy,r.academy_id)
     if not academy: raise HTTPException(404,"학원을 찾을 수 없습니다.")
