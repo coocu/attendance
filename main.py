@@ -229,6 +229,33 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
     </section>
   </div>
 
+  <div id="editManagedAcademyBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:75;padding:24px;display:flex;align-items:center;justify-content:center">
+    <div class="card" style="width:min(520px,100%);margin:0">
+      <div class="between">
+        <div class="section-title" style="margin:0">학원 수정</div>
+        <button class="secondary" onclick="closeManagedAcademyEdit()">닫기</button>
+      </div>
+      <input id="editManagedAcademyId" type="hidden">
+      <div style="height:14px"></div>
+      <div class="small" style="margin-bottom:6px">학원 이름</div>
+      <input id="editManagedAcademyName" placeholder="학원 이름">
+      <div style="height:10px"></div>
+      <div class="grid">
+        <div>
+          <div class="small" style="margin-bottom:6px">지역</div>
+          <input id="editManagedAcademyRegion" placeholder="지역">
+        </div>
+        <div>
+          <div class="small" style="margin-bottom:6px">시·군·구</div>
+          <input id="editManagedAcademyDistrict" placeholder="시·군·구">
+        </div>
+      </div>
+      <div id="editManagedAcademyMsg" class="msg"></div>
+      <div style="height:12px"></div>
+      <button class="primary" style="width:100%" onclick="saveManagedAcademyEdit()">수정 완료</button>
+    </div>
+  </div>
+
   <div id="academyManagementBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:60;padding:24px;display:flex;align-items:center;justify-content:center">
     <div class="card" style="width:min(960px,100%);max-height:90vh;overflow:auto;margin:0">
       <div class="between">
@@ -276,7 +303,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
           </div>
           <div class="tablewrap">
             <table>
-              <thead><tr><th>지역</th><th>시·군·구</th><th>학원명</th><th>상태</th><th></th></tr></thead>
+              <thead><tr><th>학원명</th><th>상태</th><th></th></tr></thead>
               <tbody id="managementAcademiesBody"></tbody>
             </table>
           </div>
@@ -406,32 +433,67 @@ function renderManagementAcademies(){
   );
   $("managementAcademiesBody").innerHTML=rows.map(a=>`
     <tr>
-      <td><input id="mg-region-${a.id}" value="${esc(a.region)}"></td>
-      <td><input id="mg-district-${a.id}" value="${esc(a.district)}"></td>
-      <td><input id="mg-name-${a.id}" value="${esc(a.name)}"></td>
+      <td><strong>${esc(a.name)}</strong></td>
       <td>${a.is_active?'<span class="pill">활성</span>':'<span class="pill" style="background:#f3f4f6;color:#6b7280">비활성</span>'}</td>
       <td>
         <div class="row">
-          <button class="secondary" onclick="updateManagedAcademy(${a.id},${a.is_active?'false':'true'})">${a.is_active?'비활성화':'활성화'}</button>
-          <button class="secondary" onclick="updateManagedAcademy(${a.id},null)">수정</button>
+          <button class="secondary" onclick="openManagedAcademyEdit(${a.id})">수정</button>
+          <button class="secondary" onclick="toggleManagedAcademy(${a.id},${a.is_active?'false':'true'})">${a.is_active?'비활성화':'활성화'}</button>
           <button class="danger" onclick="deleteManagedAcademy(${a.id},'${esc(a.name).replace(/'/g,"&#39;")}')">삭제</button>
         </div>
       </td>
     </tr>`).join("");
 }
-async function updateManagedAcademy(id,activeValue){
+function openManagedAcademyEdit(id){
+  const a=managementAcademies.find(x=>x.id===id);
+  if(!a)return;
+  $("editManagedAcademyId").value=String(a.id);
+  $("editManagedAcademyName").value=a.name||"";
+  $("editManagedAcademyRegion").value=a.region||"";
+  $("editManagedAcademyDistrict").value=a.district||"";
+  $("editManagedAcademyMsg").textContent="";
+  $("editManagedAcademyBox").classList.remove("hidden");
+}
+function closeManagedAcademyEdit(){
+  $("editManagedAcademyBox").classList.add("hidden");
+  $("editManagedAcademyMsg").textContent="";
+}
+async function saveManagedAcademyEdit(){
+  const id=Number($("editManagedAcademyId").value);
+  const current=managementAcademies.find(x=>x.id===id);
   try{
-    const body={
-      management_token:academyManagementToken,
-      academy_id:id,
-      name:$("mg-name-"+id).value.trim(),
-      region:$("mg-region-"+id).value.trim(),
-      district:$("mg-district-"+id).value.trim()
-    };
-    if(activeValue!==null)body.is_active=activeValue;
-    await api("/api/v3/academy-management/update",{method:"POST",body:JSON.stringify(body)});
-    $("managementMsg").textContent="저장되었습니다.";
-    $("managementMsg").className="msg ok";
+    await api("/api/v3/academy-management/update",{
+      method:"POST",
+      body:JSON.stringify({
+        management_token:academyManagementToken,
+        academy_id:id,
+        name:$("editManagedAcademyName").value.trim(),
+        region:$("editManagedAcademyRegion").value.trim(),
+        district:$("editManagedAcademyDistrict").value.trim(),
+        is_active:current?current.is_active:true
+      })
+    });
+    await loadManagementAcademies();
+    closeManagedAcademyEdit(); // 수정 완료 즉시 팝업 자동 닫기
+  }catch(e){
+    $("editManagedAcademyMsg").textContent=e.message;
+  }
+}
+async function toggleManagedAcademy(id,activeValue){
+  const a=managementAcademies.find(x=>x.id===id);
+  if(!a)return;
+  try{
+    await api("/api/v3/academy-management/update",{
+      method:"POST",
+      body:JSON.stringify({
+        management_token:academyManagementToken,
+        academy_id:id,
+        name:a.name,
+        region:a.region,
+        district:a.district,
+        is_active:activeValue
+      })
+    });
     await loadManagementAcademies();
   }catch(e){$("managementMsg").textContent=e.message;$("managementMsg").className="msg"}
 }
