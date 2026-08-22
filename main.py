@@ -457,12 +457,21 @@ async function openManagedAcademyEdit(id){
   $("editManagedAcademyMsg").textContent="";
 
   try{
+    // 서버에 존재하는 전체 지역 목록을 항상 불러옴
     const regions=await api("/api/v3/regions");
+    const allRegions=[...new Set([
+      ...regions,
+      ...(a.region ? [a.region] : [])
+    ])].sort((x,y)=>String(x).localeCompare(String(y),"ko"));
+
     $("editManagedAcademyRegion").innerHTML=
       '<option value="">지역 선택</option>'+
-      regions.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("");
+      allRegions.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join("");
 
+    // 현재 등록 지역은 기본 선택값으로 유지
     $("editManagedAcademyRegion").value=a.region||"";
+
+    // 현재 지역의 전체 시·군·구 목록을 불러오고 현재 값 선택
     await loadEditManagedDistricts(a.district||"");
 
     $("editManagedAcademyBox").classList.remove("hidden");
