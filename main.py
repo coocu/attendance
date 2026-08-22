@@ -1425,6 +1425,26 @@ def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=
 
     local=to_kst(occurred)
 
+    # 관리자 수동출석 연속 입력 방지:
+    # 같은 학원 + 같은 학생 + 같은 입실/퇴실 유형의 MANUAL 기록이
+    # 등록하려는 시간 기준 직전 10분 안에 있으면 중복 등록을 막습니다.
+    duplicate=db.scalar(
+        select(AttendanceEvent.id).where(
+            AttendanceEvent.academy_id==auth["academy_id"],
+            AttendanceEvent.student_id==student.id,
+            AttendanceEvent.event_type==r.event_type,
+            AttendanceEvent.source=="MANUAL",
+            AttendanceEvent.occurred_at>=occurred-timedelta(minutes=10),
+            AttendanceEvent.occurred_at<=occurred
+        ).limit(1)
+    )
+    if duplicate:
+        action="입실" if r.event_type=="IN" else "퇴실"
+        raise HTTPException(
+            409,
+            f"같은 학생의 {action} 수동출석은 10분 이내에 연속 등록할 수 없습니다."
+        )
+
     event=AttendanceEvent(
         academy_id=auth["academy_id"],
         student_id=student.id,
