@@ -47,7 +47,8 @@ def _send_apns(device_token,title,body,data=None):
     payload={
         "aps":{
             "alert":{"title":title,"body":body},
-            "sound":"default"
+            "sound":"default",
+            "badge":1
         }
     }
     if data:
