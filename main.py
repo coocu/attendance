@@ -83,6 +83,7 @@ class NewStudentNfc(BaseModel): name:str; phone_last4:str; attendance_pin:str; m
 class NewStudentNoNfc(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""
 class NfcConfirm(BaseModel): nfc_registration_token:str
 class AttachExisting(BaseModel): nfc_token:str; attendance_pin:str; memo:str=""
+class AttachExistingIdentity(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""
 class EditStudent(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""; confirm_global:bool=False
 class NfcLookup(BaseModel): nfc_token:str
 class StudentIdentityReq(BaseModel): name:str; phone_last4:str
@@ -1177,7 +1178,7 @@ def duplicate_student_check(r:StudentIdentityReq,auth=Depends(admin_auth),db:Ses
     s=db.scalar(select(Student).where(Student.name==r.name.strip(),Student.phone_last4==phone))
     if not s: return {"duplicate":False}
     own=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==s.id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True)))
-    return {"duplicate":True,"student_id":s.id,"nfc_registered":bool(s.nfc_active),"already_in_academy":bool(own),"message":"중복학생이니 NFC로만 등록 가능합니다."}
+    return {"duplicate":True,"student_id":s.id,"name":s.name,"phone_last4":s.phone_last4,"nfc_registered":bool(s.nfc_active),"already_in_academy":bool(own),"message":"기존 학생 정보가 있습니다. 학생 정보를 가져와 등록할 수 있습니다."}
 
 @app.post("/api/v3/admin/students/lost-nfc/prepare")
 def lost_nfc_prepare(r:LostNfcPrepareReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
@@ -1283,6 +1284,25 @@ def attach(r:AttachExisting,auth=Depends(admin_auth),db:Session=Depends(get_db))
         if not db.scalar(select(ParentLink).where(ParentLink.device_id==did,ParentLink.student_id==s.id,ParentLink.academy_id==auth["academy_id"])):
             db.add(ParentLink(device_id=did,student_id=s.id,academy_id=auth["academy_id"]))
     db.commit(); return {"student_id":s.id,"name":s.name,"phone_last4":s.phone_last4,"extra_code":sa.login_extra_code}
+@app.post("/api/v3/admin/students/attach-existing-by-identity")
+def attach_existing_by_identity(r:AttachExistingIdentity,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호")
+    s=db.scalar(select(Student).where(Student.name==r.name.strip(),Student.phone_last4==phone))
+    if not s: raise HTTPException(404,"동일한 이름과 보호자 전화번호로 등록된 기존 학생이 없습니다.")
+    if db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==s.id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))):
+        raise HTTPException(409,"이미 이 학원에 등록된 학생입니다.")
+    if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))):
+        raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
+    sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush()
+    refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4)
+    # Student의 NFC는 학원별 복사본이 아니라 전역 1개이므로, 기존 유효 NFC가 있으면 새 학원에서도 즉시 그대로 사용됩니다.
+    device_ids=list(db.scalars(select(ParentLink.device_id).where(ParentLink.student_id==s.id).distinct()).all())
+    for did in device_ids:
+        if not db.scalar(select(ParentLink).where(ParentLink.device_id==did,ParentLink.student_id==s.id,ParentLink.academy_id==auth["academy_id"])):
+            db.add(ParentLink(device_id=did,student_id=s.id,academy_id=auth["academy_id"]))
+    db.commit()
+    return {"student_id":s.id,"name":s.name,"phone_last4":s.phone_last4,"nfc_registered":bool(s.nfc_active),"extra_code":sa.login_extra_code}
+
 @app.get("/api/v3/admin/students")
 def students(q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
     stmt=select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))
@@ -1339,6 +1359,18 @@ def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=
         raise HTTPException(400,"미래 시간으로 출석을 등록할 수 없습니다.")
 
     local=to_kst(occurred)
+
+    duplicate_window_start=occurred-timedelta(minutes=5)
+    duplicate_window_end=occurred+timedelta(minutes=5)
+    duplicate_event=db.scalar(select(AttendanceEvent.id).where(
+        AttendanceEvent.academy_id==auth["academy_id"],
+        AttendanceEvent.student_id==student.id,
+        AttendanceEvent.event_type==r.event_type,
+        AttendanceEvent.occurred_at>=duplicate_window_start,
+        AttendanceEvent.occurred_at<=duplicate_window_end
+    ).limit(1))
+    if duplicate_event:
+        raise HTTPException(409,"같은 학생의 동일한 입실/퇴실 기록은 5분 이내에 중복 등록할 수 없습니다.")
 
     event=AttendanceEvent(
         academy_id=auth["academy_id"],
