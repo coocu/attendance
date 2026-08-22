@@ -88,92 +88,11 @@ class NfcReplace(BaseModel): new_nfc_token:str
 class AttendanceReq(BaseModel): nfc_token:str|None=None; attendance_pin:str|None=None
 class ManualAttendanceReq(BaseModel): student_id:int; event_type:str; occurred_at:datetime
 class NoticeWrite(BaseModel): management_token:str; notice_type:str; content:str; is_active:bool
-class NoticeManagementSave(BaseModel): license_key:str; notice_type:str; content:str
-class NoticeManagementToggle(BaseModel): license_key:str; notice_type:str; enabled:bool
-class NoticeManagementApply(BaseModel): license_key:str; notice_type:str; content:str; enabled:bool
 class AcademyUpdate(BaseModel): management_token:str; academy_id:int; name:str|None=None; region:str|None=None; district:str|None=None; is_active:bool|None=None
 class ManageReq(BaseModel): management_token:str; academy_id:int
 
 @app.get("/health")
 def health(): return {"ok":True,"service":"codenote-attendance-v3"}
-def _notice_type(value:str):
-    value=value.strip().lower()
-    if value not in ("regular","emergency"):
-        raise HTTPException(400,"공지 종류가 올바르지 않습니다.")
-    return value
-
-async def _verify_notice_license(license_key:str):
-    key=license_key.strip()
-    if not key:
-        raise HTTPException(400,"인증키를 입력해주세요.")
-    try:
-        ok=await verify_license_key(key)
-    except AuthUnavailable as e:
-        raise HTTPException(503,str(e))
-    if not ok:
-        raise HTTPException(401,"유효하지 않은 인증키입니다.")
-
-def _notice_state(db:Session):
-    result={}
-    for notice_type in ("regular","emergency"):
-        n=db.get(Notice,notice_type)
-        if n is None:
-            n=Notice(notice_type=notice_type,content="",is_active=False)
-            db.add(n)
-            db.flush()
-        result[notice_type]={"enabled":bool(n.is_active),"content":n.content or ""}
-    return result
-
-def _notice_response(n:Notice):
-    return {"notice_type":n.notice_type,"enabled":bool(n.is_active),"content":n.content or ""}
-
-@app.get("/api/notice-management/state")
-def notice_management_state(db:Session=Depends(get_db)):
-    return _notice_state(db)
-
-@app.post("/api/notice-management/save")
-async def notice_management_save(r:NoticeManagementSave,db:Session=Depends(get_db)):
-    await _verify_notice_license(r.license_key)
-    t=_notice_type(r.notice_type)
-    n=db.get(Notice,t)
-    if n is None:
-        n=Notice(notice_type=t,content="",is_active=False)
-        db.add(n)
-    n.content=r.content
-    n.updated_at=datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(n)
-    return _notice_response(n)
-
-@app.post("/api/notice-management/toggle")
-async def notice_management_toggle(r:NoticeManagementToggle,db:Session=Depends(get_db)):
-    await _verify_notice_license(r.license_key)
-    t=_notice_type(r.notice_type)
-    n=db.get(Notice,t)
-    if n is None:
-        n=Notice(notice_type=t,content="",is_active=False)
-        db.add(n)
-    n.is_active=r.enabled
-    n.updated_at=datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(n)
-    return _notice_response(n)
-
-@app.post("/api/notice-management/apply")
-async def notice_management_apply(r:NoticeManagementApply,db:Session=Depends(get_db)):
-    await _verify_notice_license(r.license_key)
-    t=_notice_type(r.notice_type)
-    n=db.get(Notice,t)
-    if n is None:
-        n=Notice(notice_type=t,content="",is_active=False)
-        db.add(n)
-    n.content=r.content
-    n.is_active=r.enabled
-    n.updated_at=datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(n)
-    return _notice_response(n)
-
 @app.get("/api/v3/notices")
 def notices(db:Session=Depends(get_db)): return [{"type":n.notice_type,"content":n.content,"is_active":n.is_active} for n in db.scalars(select(Notice)).all()]
 @app.get("/api/v3/regions")
@@ -453,6 +372,15 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <button class="primary" style="width:100%" onclick="confirmSentSuccess()">확인</button>
     </div>
   </div>
+  <div id="adminNoticeBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.38);z-index:90;padding:24px;display:flex;align-items:center;justify-content:center">
+    <div class="card" style="width:min(520px,100%);margin:0">
+      <div id="adminNoticeTitle" class="section-title" style="margin-top:0">공지</div>
+      <div id="adminNoticeContent" style="white-space:pre-wrap;line-height:1.6"></div>
+      <div style="height:18px"></div>
+      <div id="adminNoticeActions" class="row" style="justify-content:flex-end"></div>
+    </div>
+  </div>
+
 <script>
 let token="", academyId=null, academyName="", nfcExisting=false;
 const $=id=>document.getElementById(id);
@@ -486,7 +414,7 @@ async function selectSearchedAcademy(id,name,region,district){
 }
 async function loadAcademies(){const r=$("region").value,d=$("district").value;if(!r||!d)return;const xs=await api(`/api/v3/academies?region=${encodeURIComponent(r)}&district=${encodeURIComponent(d)}`);$("academy").innerHTML='<option value="">학원</option>'+xs.map(a=>`<option value="${a.id}" data-name="${esc(a.name)}">${esc(a.name)}</option>`).join("")}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
-async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";loadStudents()}catch(e){$("loginMsg").textContent=e.message}}
+async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";showAdminNoticeIfNeeded();loadStudents()}catch(e){$("loginMsg").textContent=e.message}}
 let recoveryToken="";
 function openForgot(){const id=Number($("academy").value);if(!id){$("loginMsg").textContent="학원을 먼저 선택해주세요.";return;}$("loginMsg").textContent="";$("forgotBox").classList.toggle("hidden");}
 function backToLogin(){
@@ -549,6 +477,83 @@ async function resetPasswordNow(){try{
 }}
 
 function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
+
+let adminRegularNotice=null;
+let adminEmergencyNotice=null;
+
+function adminNoticeTodayKey(){
+  const parts=new Intl.DateTimeFormat("en-CA",{
+    timeZone:"Asia/Seoul",
+    year:"numeric",
+    month:"2-digit",
+    day:"2-digit"
+  }).formatToParts(new Date());
+  const y=parts.find(x=>x.type==="year")?.value||"";
+  const m=parts.find(x=>x.type==="month")?.value||"";
+  const d=parts.find(x=>x.type==="day")?.value||"";
+  return `${y}-${m}-${d}`;
+}
+
+function regularNoticeHiddenToday(){
+  return localStorage.getItem("attendance_regular_notice_hidden_date")===adminNoticeTodayKey();
+}
+
+function hideRegularNoticeToday(){
+  localStorage.setItem("attendance_regular_notice_hidden_date",adminNoticeTodayKey());
+}
+
+async function showAdminNoticeIfNeeded(){
+  try{
+    const notices=await api("/api/v3/notices");
+    adminRegularNotice=notices.find(n=>n.type==="regular" && n.is_active && String(n.content||"").trim())||null;
+    adminEmergencyNotice=notices.find(n=>n.type==="emergency" && n.is_active && String(n.content||"").trim())||null;
+
+    if(adminEmergencyNotice){
+      openAdminNotice(adminEmergencyNotice);
+      return;
+    }
+
+    if(adminRegularNotice && !regularNoticeHiddenToday()){
+      openAdminNotice(adminRegularNotice);
+    }
+  }catch(e){
+    console.warn("공지 조회 실패",e);
+  }
+}
+
+function openAdminNotice(notice){
+  const type=notice.type;
+  $("adminNoticeTitle").textContent=type==="emergency"?"긴급공지":"일반공지";
+  $("adminNoticeContent").textContent=notice.content||"";
+
+  if(type==="emergency"){
+    $("adminNoticeActions").innerHTML=
+      '<button class="primary" onclick="closeEmergencyAdminNotice()">확인</button>';
+  }else{
+    $("adminNoticeActions").innerHTML=
+      '<button class="secondary" onclick="hideAdminRegularToday()">오늘 하루 보지 않기</button>'+
+      '<button class="primary" onclick="closeAdminNotice()">닫기</button>';
+  }
+
+  $("adminNoticeBox").classList.remove("hidden");
+}
+
+function closeAdminNotice(){
+  $("adminNoticeBox").classList.add("hidden");
+}
+
+function hideAdminRegularToday(){
+  hideRegularNoticeToday();
+  closeAdminNotice();
+}
+
+function closeEmergencyAdminNotice(){
+  closeAdminNotice();
+  if(adminRegularNotice && !regularNoticeHiddenToday()){
+    setTimeout(()=>openAdminNotice(adminRegularNotice),80);
+  }
+}
+
 
 let academyManagementToken="";
 let managementAcademies=[];
