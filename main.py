@@ -38,6 +38,7 @@ def startup():
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE students ALTER COLUMN nfc_token DROP NOT NULL"))
         conn.execute(text("ALTER TABLE students ALTER COLUMN nfc_active SET DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE students ALTER COLUMN phone_last4 TYPE VARCHAR(11)"))
     with next(get_db()) as db:
         for t in ("regular","emergency"):
             if db.get(Notice,t) is None: db.add(Notice(notice_type=t))
@@ -84,6 +85,8 @@ class NfcConfirm(BaseModel): nfc_registration_token:str
 class AttachExisting(BaseModel): nfc_token:str; attendance_pin:str; memo:str=""
 class EditStudent(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""; confirm_global:bool=False
 class NfcLookup(BaseModel): nfc_token:str
+class StudentIdentityReq(BaseModel): name:str; phone_last4:str
+class LostNfcPrepareReq(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""
 class NfcReplace(BaseModel): new_nfc_token:str
 class AttendanceReq(BaseModel): nfc_token:str|None=None; attendance_pin:str|None=None
 class ManualAttendanceReq(BaseModel): student_id:int; event_type:str; occurred_at:datetime
@@ -1153,21 +1156,81 @@ def recovery_reset(r:ResetPw,db:Session=Depends(get_db)):
 
 @app.post("/api/v3/admin/students/new")
 def new_student_without_nfc(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Session=Depends(get_db)):
-    phone=digits(r.phone_last4,4,"전화번호 뒷자리"); pin=digits(r.attendance_pin,4,"출석번호")
+    phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))):
         raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
-    s=Student(name=r.name.strip(),phone_last4=phone,nfc_token=None,nfc_active=False); db.add(s); db.flush()
+    existing=db.scalar(select(Student).where(Student.name==r.name.strip(),Student.phone_last4==phone))
+    if existing:
+        raise HTTPException(409,"중복학생이니 NFC로만 등록 가능합니다.")
+    while True:
+        inactive_nfc="INACTIVE-"+secrets.token_urlsafe(32)
+        if not db.scalar(select(Student.id).where(Student.nfc_token==inactive_nfc)): break
+    s=Student(name=r.name.strip(),phone_last4=phone,nfc_token=inactive_nfc,nfc_active=False); db.add(s); db.flush()
     sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush()
     refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit()
     return {"student_id":s.id,"student_academy_id":sa.id,"nfc_registered":False,"extra_code":sa.login_extra_code}
+
+
+@app.post("/api/v3/admin/students/duplicate-check")
+def duplicate_student_check(r:StudentIdentityReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    phone=digits(r.phone_last4,11,"보호자 전화번호")
+    s=db.scalar(select(Student).where(Student.name==r.name.strip(),Student.phone_last4==phone))
+    if not s: return {"duplicate":False}
+    own=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==s.id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True)))
+    return {"duplicate":True,"student_id":s.id,"nfc_registered":bool(s.nfc_active),"already_in_academy":bool(own),"message":"중복학생이니 NFC로만 등록 가능합니다."}
+
+@app.post("/api/v3/admin/students/lost-nfc/prepare")
+def lost_nfc_prepare(r:LostNfcPrepareReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호")
+    s=db.scalar(select(Student).where(Student.name==r.name.strip(),Student.phone_last4==phone))
+    if not s: raise HTTPException(404,"동일한 이름과 보호자 전화번호로 등록된 기존 학생이 없습니다.")
+    pin_owner=db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True),StudentAcademy.student_id!=s.id))
+    if pin_owner: raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
+    s.nfc_token=None; s.nfc_active=False; s.updated_at=now_kst().astimezone(timezone.utc); db.flush()
+    while True:
+        value="CN-"+secrets.token_urlsafe(32)
+        if not db.scalar(select(Student.id).where(Student.nfc_token==value)): break
+    registration=token("lost_nfc_registration",student_id=s.id,academy_id=auth["academy_id"],nfc_token=value,attendance_pin=pin,memo=r.memo.strip())
+    db.commit()
+    return {"student_id":s.id,"nfc_token":value,"nfc_registration_token":registration}
+
+@app.post("/api/v3/admin/students/lost-nfc/confirm")
+def lost_nfc_confirm(r:NfcConfirm,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    p=read_token(r.nfc_registration_token,"lost_nfc_registration",600)
+    if int(p.get("academy_id",0))!=int(auth["academy_id"]): raise HTTPException(403,"다른 학원의 NFC 등록 요청입니다.")
+    s=db.get(Student,int(p["student_id"]))
+    if not s: raise HTTPException(404,"학생을 찾을 수 없습니다.")
+    nt=str(p.get("nfc_token","")).strip()
+    if db.scalar(select(Student).where(Student.nfc_token==nt,Student.id!=s.id)): raise HTTPException(409,"이미 다른 학생에게 사용 중인 NFC 토큰입니다.")
+    sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==s.id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True)))
+    if not sa:
+        sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=str(p.get("attendance_pin","")),memo=str(p.get("memo",""))); db.add(sa)
+    else:
+        sa.attendance_pin=str(p.get("attendance_pin",sa.attendance_pin))
+        if str(p.get("memo","")): sa.memo=str(p.get("memo",""))
+    s.nfc_token=nt; s.nfc_active=True; s.updated_at=now_kst().astimezone(timezone.utc); db.commit()
+    return {"ok":True,"student_id":s.id,"nfc_registered":True}
+
+@app.post("/api/v3/admin/students/{student_id}/nfc/reset")
+def reset_student_nfc(student_id:int,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True)))
+    if not sa: raise HTTPException(404,"이 학원에 등록된 학생이 아닙니다.")
+    s=db.get(Student,student_id)
+    if not s: raise HTTPException(404,"학생을 찾을 수 없습니다.")
+    s.nfc_token=None; s.nfc_active=False; s.updated_at=now_kst().astimezone(timezone.utc); db.commit()
+    return {"ok":True,"student_id":student_id,"nfc_registered":False}
 
 @app.post("/api/v3/admin/students/{student_id}/nfc/prepare")
 def prepare_student_nfc(student_id:int,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True)))
     s=db.get(Student,student_id)
     if not sa or not s: raise HTTPException(404,"학생을 찾을 수 없습니다.")
-    # 재발급을 시작하는 즉시 분실한 이전 카드를 서버에서 무효화합니다.
-    s.nfc_token=None; s.nfc_active=False; s.updated_at=now_kst().astimezone(timezone.utc); db.flush()
+    # 재발급을 시작하는 즉시 이전 카드는 무효화하되,
+    # DB의 nfc_token NOT NULL/UNIQUE 조건을 깨지 않도록 비활성 전용 토큰을 넣습니다.
+    while True:
+        inactive_nfc="INACTIVE-"+secrets.token_urlsafe(32)
+        if not db.scalar(select(Student.id).where(Student.nfc_token==inactive_nfc)): break
+    s.nfc_token=inactive_nfc; s.nfc_active=False; s.updated_at=now_kst().astimezone(timezone.utc); db.flush()
     while True:
         value="CN-"+secrets.token_urlsafe(32)
         if not db.scalar(select(Student.id).where(Student.nfc_token==value)): break
@@ -1202,7 +1265,7 @@ def nfc_lookup(r:NfcLookup,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     return {"exists":True,"already_in_academy":bool(own),"student_id":s.id,"name":s.name,"phone_last4":s.phone_last4}
 @app.post("/api/v3/admin/students/new-with-nfc")
 def new_student(r:NewStudentNfc,auth=Depends(admin_auth),db:Session=Depends(get_db)):
-    phone=digits(r.phone_last4,4,"전화번호 뒷자리"); pin=digits(r.attendance_pin,4,"출석번호"); nt=r.nfc_token.strip()
+    phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호"); nt=r.nfc_token.strip()
     if not nt: raise HTTPException(400,"NFC 카드 등록이 필요합니다.")
     if db.scalar(select(Student).where(Student.nfc_token==nt)): raise HTTPException(409,"이미 등록된 NFC 카드입니다. 기존 학생 불러오기를 사용하세요.")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))): raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
@@ -1230,7 +1293,7 @@ def students(q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
 def edit_student(student_id:int,r:EditStudent,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))); s=db.get(Student,student_id)
     if not sa or not s: raise HTTPException(404,"학생을 찾을 수 없습니다.")
-    phone=digits(r.phone_last4,4,"전화번호 뒷자리"); pin=digits(r.attendance_pin,4,"출석번호")
+    phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호")
     dup=db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.id!=sa.id,StudentAcademy.is_active.is_(True)))
     if dup: raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
     links=db.scalar(select(func.count()).select_from(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.is_active.is_(True))) or 0
@@ -1399,7 +1462,7 @@ def attendance(r:AttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_d
 
 @app.post("/api/v3/parent/login")
 def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
-    a=active_academy(db,r.academy_id); phone=digits(r.phone_last4,4,"전화번호 뒷자리")
+    a=active_academy(db,r.academy_id); phone=digits(r.phone_last4,11,"보호자 전화번호")
     rows=db.execute(select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==a.id,StudentAcademy.is_active.is_(True),Student.name==r.name.strip(),Student.phone_last4==phone)).all()
     if not rows: raise HTTPException(401,"등록된 학생 정보를 확인해 주세요.")
     if len(rows)>1:
