@@ -76,7 +76,7 @@ class AdminLoginReq(BaseModel): academy_id:int; password:str
 class ParentLoginReq(BaseModel): academy_id:int; name:str; phone_last4:str; extra_code:str|None=None; installation_id:str; platform:str="android"; push_token:str|None=None
 class PushTokenReq(BaseModel): push_token:str
 class ChangePw(BaseModel): current_password:str; new_password:str=Field(min_length=4)
-class RecoveryVerify(BaseModel): academy_id:int; recovery_name:str; recovery_phone_last4:str
+class RecoveryVerify(BaseModel): academy_id:int; recovery_name:str; recovery_phone_last4:str; license_key:str
 class ResetPw(BaseModel): recovery_token:str; new_password:str=Field(min_length=4)
 class NewStudentNfc(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""; nfc_token:str
 class NewStudentNoNfc(BaseModel): name:str; phone_last4:str; attendance_pin:str; memo:str=""
@@ -170,6 +170,9 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
         <input id="recoveryName" placeholder="최초 관리자 성함">
         <input id="recoveryPhone" maxlength="4" inputmode="numeric" placeholder="전화번호 끝 4자리">
       </div>
+      <div style="height:10px"></div>
+      <input id="recoveryLicenseKey" type="password" placeholder="일반 인증키">
+      <div class="small" style="margin-top:6px">서버에 등록된 유효한 일반 인증키를 입력해주세요.</div>
       <div style="height:10px"></div>
       <button class="secondary" onclick="verifyRecovery()">본인 확인</button>
       <div id="resetBox" class="hidden" style="margin-top:12px">
@@ -387,12 +390,33 @@ function backToLogin(){
   $("resetBox").classList.add("hidden");
   $("recoveryName").value="";
   $("recoveryPhone").value="";
+  $("recoveryLicenseKey").value="";
   $("resetPassword").value="";
   $("resetPassword2").value="";
   $("forgotMsg").textContent="";
   recoveryToken="";
 }
-async function verifyRecovery(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 먼저 선택해주세요.");const name=$("recoveryName").value.trim();const phone=$("recoveryPhone").value.trim();if(!name)throw new Error("최초 관리자 성함을 입력해주세요.");if(!/^\d{4}$/.test(phone))throw new Error("전화번호 끝 4자리를 입력해주세요.");const d=await api("/api/v3/admin/recovery/verify",{method:"POST",body:JSON.stringify({academy_id:id,recovery_name:name,recovery_phone_last4:phone})});recoveryToken=d.recovery_token;$("resetBox").classList.remove("hidden");$("forgotMsg").textContent="본인 확인이 완료되었습니다.";$("forgotMsg").className="msg ok"}catch(e){$("forgotMsg").textContent=e.message;$("forgotMsg").className="msg"}}
+async function verifyRecovery(){try{
+  const id=Number($("academy").value);
+  if(!id)throw new Error("학원을 먼저 선택해주세요.");
+  const name=$("recoveryName").value.trim();
+  const phone=$("recoveryPhone").value.trim();
+  const licenseKey=$("recoveryLicenseKey").value.trim();
+  if(!name)throw new Error("최초 관리자 성함을 입력해주세요.");
+  if(!/^\d{4}$/.test(phone))throw new Error("전화번호 끝 4자리를 입력해주세요.");
+  if(!licenseKey)throw new Error("일반 인증키를 입력해주세요.");
+  const d=await api("/api/v3/admin/recovery/verify",{
+    method:"POST",
+    body:JSON.stringify({academy_id:id,recovery_name:name,recovery_phone_last4:phone,license_key:licenseKey})
+  });
+  recoveryToken=d.recovery_token;
+  $("resetBox").classList.remove("hidden");
+  $("forgotMsg").textContent="본인 확인이 완료되었습니다.";
+  $("forgotMsg").className="msg ok";
+}catch(e){
+  $("forgotMsg").textContent=e.message;
+  $("forgotMsg").className="msg";
+}}
 async function resetPasswordNow(){try{if(!recoveryToken)throw new Error("먼저 본인 확인을 해주세요.");const p=$("resetPassword").value,p2=$("resetPassword2").value;if(p.length<4)throw new Error("새 비밀번호는 4자리 이상 입력해주세요.");if(p!==p2)throw new Error("새 비밀번호가 일치하지 않습니다.");await api("/api/v3/admin/recovery/reset",{method:"POST",body:JSON.stringify({recovery_token:recoveryToken,new_password:p})});$("forgotMsg").textContent="관리자 비밀번호가 변경되었습니다.";$("forgotMsg").className="msg ok";recoveryToken="";$("resetBox").classList.add("hidden");$("password").value=""}catch(e){$("forgotMsg").textContent=e.message;$("forgotMsg").className="msg"}}
 
 function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
@@ -763,9 +787,18 @@ def change_pw(r:ChangePw,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     if not verify_password(r.current_password,c.password_hash): raise HTTPException(401,"현재 비밀번호가 올바르지 않습니다.")
     c.password_hash=hash_password(r.new_password); db.commit(); return {"ok":True}
 @app.post("/api/v3/admin/recovery/verify")
-def recovery(r:RecoveryVerify,db:Session=Depends(get_db)):
+async def recovery(r:RecoveryVerify,db:Session=Depends(get_db)):
+    # 관리자 비밀번호 재설정은 등록정보 + 서버의 유효한 일반 인증키를 모두 확인
+    try:
+        key_ok=await verify_license_key(r.license_key.strip())
+    except AuthUnavailable as e:
+        raise HTTPException(503,str(e))
+    if not key_ok:
+        raise HTTPException(401,"유효하지 않은 인증키입니다.")
+
     a=active_academy(db,r.academy_id)
-    if a.recovery_name!=r.recovery_name.strip() or a.recovery_phone_last4!=digits(r.recovery_phone_last4,4,"전화번호 뒷자리"): raise HTTPException(401,"등록정보가 일치하지 않습니다.")
+    if a.recovery_name!=r.recovery_name.strip() or a.recovery_phone_last4!=digits(r.recovery_phone_last4,4,"전화번호 뒷자리"):
+        raise HTTPException(401,"등록정보가 일치하지 않습니다.")
     return {"recovery_token":token("recovery",academy_id=a.id)}
 @app.post("/api/v3/admin/recovery/reset")
 def recovery_reset(r:ResetPw,db:Session=Depends(get_db)):
