@@ -2,7 +2,7 @@ from zoneinfo import ZoneInfo
 from datetime import datetime, timezone, timedelta
 from calendar import monthrange
 import secrets, random
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -1758,7 +1758,7 @@ def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=
     }
 
 @app.post("/api/v3/attendance/check")
-def attendance(r:AttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+def attendance(r:AttendanceReq,background_tasks:BackgroundTasks,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     if bool(r.nfc_token) == bool(r.attendance_pin): raise HTTPException(400,"NFC 또는 4자리 출석번호 중 하나만 입력하세요.")
     if r.nfc_token:
         s=db.scalar(select(Student).where(Student.nfc_token==r.nfc_token.strip(),Student.nfc_active.is_(True)))
@@ -1835,7 +1835,13 @@ def attendance(r:AttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_d
     e=AttendanceEvent(academy_id=auth["academy_id"],student_id=s.id,student_academy_id=sa.id,event_type=typ,source=source,occurred_at=now); db.add(e); db.commit(); db.refresh(e)
     a=db.get(Academy,auth["academy_id"]); action="입실" if typ=="IN" else "퇴실"; when=to_kst(e.occurred_at).strftime("%H:%M")
     tokens=list(db.scalars(select(ParentDevice.push_token).join(ParentLink,ParentLink.device_id==ParentDevice.id).where(ParentLink.student_id==s.id,ParentLink.academy_id==a.id,ParentDevice.push_token.is_not(None))).all())
-    send_push(tokens,a.name,f"{s.name} 학생이 {when} {action}했습니다.",{"student_id":str(s.id),"academy_id":str(a.id),"event_type":typ})
+    background_tasks.add_task(
+        send_push,
+        tokens,
+        a.name,
+        f"{s.name} 학생이 {when} {action}했습니다.",
+        {"student_id":str(s.id),"academy_id":str(a.id),"event_type":typ}
+    )
     return {"ok":True,"student_id":s.id,"student_name":s.name,"event_type":typ,"source":source,"occurred_at":to_kst(e.occurred_at).isoformat(),"lockout_minutes":10}
 
 @app.post("/api/v3/parent/login")
