@@ -127,6 +127,27 @@ def sync_parent_family_links(db:Session,phone:str,device_id:int|None=None):
                 existing_keys.add(key)
     db.flush()
 
+def release_inactive_attendance_pin(db:Session, academy_id:int, attendance_pin:str):
+    """퇴원/비활성 학생이 보유한 과거 출석번호를 내부값으로 바꿔 재사용 가능하게 한다."""
+    stale_links=list(db.scalars(select(StudentAcademy).where(
+        StudentAcademy.academy_id==academy_id,
+        StudentAcademy.attendance_pin==attendance_pin,
+        StudentAcademy.is_active.is_(False)
+    )).all())
+    if not stale_links:
+        return
+    alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    for stale in stale_links:
+        while True:
+            released_pin="~"+"".join(secrets.choice(alphabet) for _ in range(3))
+            if not db.scalar(select(StudentAcademy.id).where(
+                StudentAcademy.academy_id==academy_id,
+                StudentAcademy.attendance_pin==released_pin
+            )):
+                stale.attendance_pin=released_pin
+                break
+    db.flush()
+
 class KeyReq(BaseModel): license_key:str
 class AcademyCreate(BaseModel): registration_token:str; name:str; region:str; district:str; admin_password:str=Field(min_length=4); recovery_name:str; recovery_phone_last4:str
 class AdminLoginReq(BaseModel): academy_id:int; password:str
@@ -1338,6 +1359,7 @@ def update_admin_academy_settings(r:AcademyHoursReq,auth=Depends(admin_auth),db:
 @app.post("/api/v3/admin/students/new")
 def new_student_without_nfc(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호")
+    release_inactive_attendance_pin(db,auth["academy_id"],pin)
     if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))):
         raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
     existing=db.scalar(select(Student).where(Student.name==r.name.strip(),Student.phone_last4==phone))
@@ -1363,6 +1385,7 @@ def duplicate_student_check(r:StudentIdentityReq,auth=Depends(admin_auth),db:Ses
 @app.post("/api/v3/admin/students/lost-nfc/prepare")
 def lost_nfc_prepare(r:LostNfcPrepareReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호")
+    release_inactive_attendance_pin(db,auth["academy_id"],pin)
     s=db.scalar(select(Student).where(Student.name==r.name.strip(),Student.phone_last4==phone))
     if not s: raise HTTPException(404,"동일한 이름과 보호자 전화번호로 등록된 기존 학생이 없습니다.")
     pin_owner=db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True),StudentAcademy.student_id!=s.id))
@@ -1406,6 +1429,7 @@ def reset_student_nfc(student_id:int,auth=Depends(admin_auth),db:Session=Depends
 def attach_existing_by_identity(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     phone=digits(r.phone_last4,11,"보호자 전화번호")
     pin=digits(r.attendance_pin,4,"출석번호")
+    release_inactive_attendance_pin(db,auth["academy_id"],pin)
     if r.student_id is not None:
         s=db.get(Student,int(r.student_id))
         if not s or s.name!=r.name.strip() or s.phone_last4!=phone:
@@ -1530,6 +1554,7 @@ def nfc_lookup(r:NfcLookup,auth=Depends(admin_auth),db:Session=Depends(get_db)):
 @app.post("/api/v3/admin/students/new-with-nfc")
 def new_student(r:NewStudentNfc,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호"); nt=r.nfc_token.strip()
+    release_inactive_attendance_pin(db,auth["academy_id"],pin)
     if not nt: raise HTTPException(400,"NFC 카드 등록이 필요합니다.")
     if db.scalar(select(Student).where(Student.nfc_token==nt)): raise HTTPException(409,"이미 등록된 NFC 카드입니다. 기존 학생 불러오기를 사용하세요.")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))): raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
@@ -1537,6 +1562,7 @@ def new_student(r:NewStudentNfc,auth=Depends(admin_auth),db:Session=Depends(get_
 @app.post("/api/v3/admin/students/attach-existing")
 def attach(r:AttachExisting,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     pin=digits(r.attendance_pin,4,"출석번호"); s=db.scalar(select(Student).where(Student.nfc_token==r.nfc_token.strip(),Student.nfc_active.is_(True)))
+    release_inactive_attendance_pin(db,auth["academy_id"],pin)
     if not s: raise HTTPException(404,"등록된 NFC 학생이 아닙니다.")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==s.id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))): raise HTTPException(409,"이미 이 학원에 등록된 학생입니다.")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))): raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
@@ -1558,6 +1584,7 @@ def edit_student(student_id:int,r:EditStudent,auth=Depends(admin_auth),db:Sessio
     sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))); s=db.get(Student,student_id)
     if not sa or not s: raise HTTPException(404,"학생을 찾을 수 없습니다.")
     phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호")
+    release_inactive_attendance_pin(db,auth["academy_id"],pin)
     dup=db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.id!=sa.id,StudentAcademy.is_active.is_(True)))
     if dup: raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
     links=db.scalar(select(func.count()).select_from(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.is_active.is_(True))) or 0
