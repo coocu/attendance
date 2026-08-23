@@ -109,15 +109,19 @@ def sync_parent_family_links(db:Session,phone:str,device_id:int|None=None):
         ).all())
     else:
         device_ids=[device_id]
+    if not device_ids:
+        return
+    family_student_ids=list({student.id for _,student in family_rows})
+    existing_keys=set(db.execute(
+        select(ParentLink.device_id,ParentLink.student_id,ParentLink.academy_id)
+        .where(ParentLink.device_id.in_(device_ids),ParentLink.student_id.in_(family_student_ids))
+    ).all())
     for did in device_ids:
         for sa,student in family_rows:
-            exists=db.scalar(select(ParentLink).where(
-                ParentLink.device_id==did,
-                ParentLink.student_id==student.id,
-                ParentLink.academy_id==sa.academy_id
-            ))
-            if not exists:
+            key=(did,student.id,sa.academy_id)
+            if key not in existing_keys:
                 db.add(ParentLink(device_id=did,student_id=student.id,academy_id=sa.academy_id))
+                existing_keys.add(key)
     db.flush()
 
 class KeyReq(BaseModel): license_key:str
