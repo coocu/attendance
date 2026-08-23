@@ -71,6 +71,34 @@ def refresh_duplicate_codes(db:Session,academy_id:int,name:str,phone:str):
             used.add(sa.login_extra_code)
     db.flush()
 
+def sync_parent_family_links(db:Session,phone:str,device_id:int|None=None):
+    # 동일 보호자 전화번호의 학생들은 한 보호자 기기에서 함께 조회되도록 연결합니다.
+    family_rows=db.execute(
+        select(StudentAcademy,Student)
+        .join(Student,Student.id==StudentAcademy.student_id)
+        .where(Student.phone_last4==phone,StudentAcademy.is_active.is_(True))
+    ).all()
+    if not family_rows: return
+    if device_id is None:
+        family_student_ids=[s.id for _,s in family_rows]
+        device_ids=list(db.scalars(
+            select(ParentLink.device_id)
+            .where(ParentLink.student_id.in_(family_student_ids))
+            .distinct()
+        ).all())
+    else:
+        device_ids=[device_id]
+    for did in device_ids:
+        for sa,student in family_rows:
+            exists=db.scalar(select(ParentLink).where(
+                ParentLink.device_id==did,
+                ParentLink.student_id==student.id,
+                ParentLink.academy_id==sa.academy_id
+            ))
+            if not exists:
+                db.add(ParentLink(device_id=did,student_id=student.id,academy_id=sa.academy_id))
+    db.flush()
+
 class KeyReq(BaseModel): license_key:str
 class AcademyCreate(BaseModel): registration_token:str; name:str; region:str; district:str; admin_password:str=Field(min_length=4); recovery_name:str; recovery_phone_last4:str
 class AdminLoginReq(BaseModel): academy_id:int; password:str
@@ -1173,7 +1201,7 @@ def new_student_without_nfc(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Sessio
         if not db.scalar(select(Student.id).where(Student.nfc_token==inactive_nfc)): break
     s=Student(name=r.name.strip(),phone_last4=phone,nfc_token=inactive_nfc,nfc_active=False); db.add(s); db.flush()
     sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush()
-    refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit()
+    refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); sync_parent_family_links(db,s.phone_last4); db.commit()
     return {"student_id":s.id,"student_academy_id":sa.id,"nfc_registered":False,"extra_code":sa.login_extra_code}
 
 
@@ -1295,6 +1323,7 @@ def attach_existing_by_identity(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Se
                 academy_id=auth["academy_id"]
             ))
 
+    sync_parent_family_links(db,s.phone_last4)
     db.commit()
     return {
         "ok":True,
@@ -1354,7 +1383,7 @@ def new_student(r:NewStudentNfc,auth=Depends(admin_auth),db:Session=Depends(get_
     if not nt: raise HTTPException(400,"NFC 카드 등록이 필요합니다.")
     if db.scalar(select(Student).where(Student.nfc_token==nt)): raise HTTPException(409,"이미 등록된 NFC 카드입니다. 기존 학생 불러오기를 사용하세요.")
     if db.scalar(select(StudentAcademy).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.attendance_pin==pin,StudentAcademy.is_active.is_(True))): raise HTTPException(409,"이 학원에서 이미 사용 중인 출석번호입니다.")
-    s=Student(name=r.name.strip(),phone_last4=phone,nfc_token=nt,nfc_active=True); db.add(s); db.flush(); sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush(); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit(); return {"student_id":s.id,"student_academy_id":sa.id,"extra_code":sa.login_extra_code}
+    s=Student(name=r.name.strip(),phone_last4=phone,nfc_token=nt,nfc_active=True); db.add(s); db.flush(); sa=StudentAcademy(student_id=s.id,academy_id=auth["academy_id"],attendance_pin=pin,memo=r.memo.strip()); db.add(sa); db.flush(); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); sync_parent_family_links(db,s.phone_last4); db.commit(); return {"student_id":s.id,"student_academy_id":sa.id,"extra_code":sa.login_extra_code}
 @app.post("/api/v3/admin/students/attach-existing")
 def attach(r:AttachExisting,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     pin=digits(r.attendance_pin,4,"출석번호"); s=db.scalar(select(Student).where(Student.nfc_token==r.nfc_token.strip(),Student.nfc_active.is_(True)))
@@ -1367,7 +1396,7 @@ def attach(r:AttachExisting,auth=Depends(admin_auth),db:Session=Depends(get_db))
     for did in device_ids:
         if not db.scalar(select(ParentLink).where(ParentLink.device_id==did,ParentLink.student_id==s.id,ParentLink.academy_id==auth["academy_id"])):
             db.add(ParentLink(device_id=did,student_id=s.id,academy_id=auth["academy_id"]))
-    db.commit(); return {"student_id":s.id,"name":s.name,"phone_last4":s.phone_last4,"extra_code":sa.login_extra_code}
+    sync_parent_family_links(db,s.phone_last4); db.commit(); return {"student_id":s.id,"name":s.name,"phone_last4":s.phone_last4,"extra_code":sa.login_extra_code}
 @app.get("/api/v3/admin/students")
 def students(q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
     stmt=select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))
@@ -1384,7 +1413,30 @@ def edit_student(student_id:int,r:EditStudent,auth=Depends(admin_auth),db:Sessio
     links=db.scalar(select(func.count()).select_from(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.is_active.is_(True))) or 0
     global_changed=(s.name!=r.name.strip() or s.phone_last4!=phone)
     if global_changed and not r.confirm_global: raise HTTPException(409,"GLOBAL_CONFIRM_REQUIRED")
-    old_name,old_phone=s.name,s.phone_last4; s.name=r.name.strip(); s.phone_last4=phone; s.updated_at=now_kst().astimezone(timezone.utc); sa.attendance_pin=pin; sa.memo=r.memo.strip(); refresh_duplicate_codes(db,auth["academy_id"],old_name,old_phone); refresh_duplicate_codes(db,auth["academy_id"],s.name,s.phone_last4); db.commit(); return {"ok":True,"global_updated":global_changed,"linked_academies":links}
+    old_name,old_phone=s.name,s.phone_last4
+    phone_changed=(old_phone!=phone)
+    family_students=list(db.scalars(select(Student).where(Student.phone_last4==old_phone)).all()) if phone_changed else [s]
+    s.name=r.name.strip()
+    now_value=now_kst().astimezone(timezone.utc)
+    if phone_changed:
+        for family_student in family_students:
+            family_student.phone_last4=phone
+            family_student.updated_at=now_value
+    else:
+        s.updated_at=now_value
+    sa.attendance_pin=pin; sa.memo=r.memo.strip()
+    affected_pairs=set()
+    for family_student in family_students:
+        for aid in db.scalars(select(StudentAcademy.academy_id).where(StudentAcademy.student_id==family_student.id,StudentAcademy.is_active.is_(True))).all():
+            affected_pairs.add((aid,family_student.name))
+    if old_name!=s.name:
+        affected_pairs.add((auth["academy_id"],old_name))
+        affected_pairs.add((auth["academy_id"],s.name))
+    for aid,student_name in affected_pairs:
+        refresh_duplicate_codes(db,aid,student_name,phone if phone_changed else old_phone)
+    if phone_changed:
+        sync_parent_family_links(db,phone)
+    db.commit(); return {"ok":True,"global_updated":global_changed,"linked_academies":links,"family_phone_updated":len(family_students) if phone_changed else 0}
 @app.post("/api/v3/admin/students/{student_id}/replace-nfc")
 def replace_nfc(student_id:int,r:NfcReplace,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     sa=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==student_id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))); s=db.get(Student,student_id)
@@ -1546,6 +1598,7 @@ def attendance(r:AttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_d
                         student_id=s.id,
                         academy_id=auth["academy_id"]
                     ))
+            sync_parent_family_links(db,s.phone_last4)
             db.flush()
         source="NFC"
     else:
@@ -1578,10 +1631,7 @@ def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
     d=db.scalar(select(ParentDevice).where(ParentDevice.installation_id==r.installation_id,ParentDevice.platform==r.platform))
     if not d: d=ParentDevice(installation_id=r.installation_id,platform=r.platform,push_token=r.push_token); db.add(d); db.flush()
     else: d.push_token=r.push_token or d.push_token; d.updated_at=now_kst().astimezone(timezone.utc)
-    academy_ids=list(db.scalars(select(StudentAcademy.academy_id).where(StudentAcademy.student_id==s.id,StudentAcademy.is_active.is_(True))).all())
-    for aid in academy_ids:
-        if not db.scalar(select(ParentLink).where(ParentLink.device_id==d.id,ParentLink.student_id==s.id,ParentLink.academy_id==aid)):
-            db.add(ParentLink(device_id=d.id,student_id=s.id,academy_id=aid))
+    sync_parent_family_links(db,phone,d.id)
     db.commit(); return {"needs_extra_code":False,"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name,"access_token":token("parent",device_id=d.id)}
 @app.post("/api/v3/parent/device/push-token")
 def update_parent_push_token(r:PushTokenReq,auth=Depends(parent_auth),db:Session=Depends(get_db)):
@@ -1596,6 +1646,15 @@ def update_parent_push_token(r:PushTokenReq,auth=Depends(parent_auth),db:Session
 
 @app.get("/api/v3/parent/links")
 def parent_links(auth=Depends(parent_auth),db:Session=Depends(get_db)):
+    phones=list(db.scalars(
+        select(Student.phone_last4)
+        .join(ParentLink,ParentLink.student_id==Student.id)
+        .where(ParentLink.device_id==auth["device_id"])
+        .distinct()
+    ).all())
+    for phone in phones:
+        sync_parent_family_links(db,phone,auth["device_id"])
+    db.commit()
     rows=db.execute(select(ParentLink,Student,Academy).join(Student,Student.id==ParentLink.student_id).join(Academy,Academy.id==ParentLink.academy_id).where(ParentLink.device_id==auth["device_id"],Academy.is_active.is_(True))).all()
     return [{"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name} for l,s,a in rows]
 def month_bounds(y,m):
