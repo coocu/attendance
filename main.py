@@ -1277,7 +1277,6 @@ def attach_existing_by_identity(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Se
     pin_owner=db.scalar(select(StudentAcademy).where(
         StudentAcademy.academy_id==auth["academy_id"],
         StudentAcademy.attendance_pin==pin,
-        StudentAcademy.is_active.is_(True),
         StudentAcademy.student_id!=s.id
     ))
     if pin_owner:
