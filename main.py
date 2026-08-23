@@ -1323,7 +1323,6 @@ def attach_existing_by_identity(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Se
                 academy_id=auth["academy_id"]
             ))
 
-    sync_parent_family_links(db,s.phone_last4)
     db.commit()
     return {
         "ok":True,
