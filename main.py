@@ -29,6 +29,24 @@ def to_kst(dt: datetime):
         # DB의 naive datetime은 UTC로 해석
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(KST)
+
+def hhmm(v:str,label:str):
+    try:
+        h,m=[int(x) for x in v.split(":",1)]
+        if not (0<=h<=23 and 0<=m<=59): raise ValueError
+    except Exception:
+        raise HTTPException(400,f"{label} 형식이 올바르지 않습니다.")
+    return h,m
+
+def academy_business_start_utc(a:Academy,when_utc:datetime):
+    local=to_kst(when_utc)
+    if getattr(a,"is_24_hours",True):
+        return local.replace(hour=0,minute=0,second=0,microsecond=0).astimezone(timezone.utc)
+    h,m=hhmm(getattr(a,"open_time","09:00"),"영업 시작시간")
+    start=local.replace(hour=h,minute=m,second=0,microsecond=0)
+    if local < start:
+        start-=timedelta(days=1)
+    return start.astimezone(timezone.utc)
 app=FastAPI(title="CodeNote Attendance V3 API",version="3.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
 @app.on_event("startup")
@@ -39,6 +57,9 @@ def startup():
         conn.execute(text("ALTER TABLE students ALTER COLUMN nfc_token DROP NOT NULL"))
         conn.execute(text("ALTER TABLE students ALTER COLUMN nfc_active SET DEFAULT FALSE"))
         conn.execute(text("ALTER TABLE students ALTER COLUMN phone_last4 TYPE VARCHAR(11)"))
+        conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS is_24_hours BOOLEAN NOT NULL DEFAULT TRUE"))
+        conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS open_time VARCHAR(5) NOT NULL DEFAULT '09:00'"))
+        conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS close_time VARCHAR(5) NOT NULL DEFAULT '20:00'"))
     with next(get_db()) as db:
         for t in ("regular","emergency"):
             if db.get(Notice,t) is None: db.add(Notice(notice_type=t))
@@ -118,6 +139,7 @@ class LostNfcPrepareReq(BaseModel): name:str; phone_last4:str; attendance_pin:st
 class NfcReplace(BaseModel): new_nfc_token:str
 class AttendanceReq(BaseModel): nfc_token:str|None=None; attendance_pin:str|None=None
 class ManualAttendanceReq(BaseModel): student_id:int; event_type:str; occurred_at:datetime
+class AcademyHoursReq(BaseModel): is_24_hours:bool; open_time:str="09:00"; close_time:str="20:00"
 class NoticeWrite(BaseModel): management_token:str; notice_type:str; content:str; is_active:bool
 
 # 코드노트 공지 앱(기존 MusyncNotice) 호환용 요청 모델
@@ -1188,6 +1210,68 @@ async def recovery(r:RecoveryVerify,db:Session=Depends(get_db)):
 def recovery_reset(r:ResetPw,db:Session=Depends(get_db)):
     d=read_token(r.recovery_token,"recovery",600); c=db.get(AdminCredential,d["academy_id"]); c.password_hash=hash_password(r.new_password); db.commit(); return {"ok":True}
 
+def academy_stats_payload(db:Session,a:Academy):
+    active_ids=list(db.scalars(select(StudentAcademy.student_id).where(
+        StudentAcademy.academy_id==a.id,
+        StudentAcademy.is_active.is_(True)
+    )).all())
+    registered=len(active_ids)
+    now=now_kst().astimezone(timezone.utc)
+    start=academy_business_start_utc(a,now)
+
+    today_in=db.scalar(select(func.count(func.distinct(AttendanceEvent.student_id))).where(
+        AttendanceEvent.academy_id==a.id,
+        AttendanceEvent.occurred_at>=start,
+        AttendanceEvent.event_type=="IN"
+    )) or 0
+    today_out=db.scalar(select(func.count(func.distinct(AttendanceEvent.student_id))).where(
+        AttendanceEvent.academy_id==a.id,
+        AttendanceEvent.occurred_at>=start,
+        AttendanceEvent.event_type=="OUT"
+    )) or 0
+
+    current_in=0
+    if active_ids:
+        stmt=select(AttendanceEvent).where(
+            AttendanceEvent.academy_id==a.id,
+            AttendanceEvent.student_id.in_(active_ids)
+        )
+        if not getattr(a,"is_24_hours",True):
+            stmt=stmt.where(AttendanceEvent.occurred_at>=start)
+        events=db.scalars(stmt.order_by(AttendanceEvent.occurred_at.desc())).all()
+        seen=set()
+        for e in events:
+            if e.student_id in seen: continue
+            seen.add(e.student_id)
+            if e.event_type=="IN": current_in+=1
+            if len(seen)>=registered: break
+
+    return {
+        "academy_id":a.id,
+        "is_24_hours":bool(getattr(a,"is_24_hours",True)),
+        "open_time":getattr(a,"open_time","09:00"),
+        "close_time":getattr(a,"close_time","20:00"),
+        "registered_students":registered,
+        "current_in":current_in,
+        "today_in":int(today_in),
+        "today_out":int(today_out)
+    }
+
+@app.get("/api/v3/admin/academy/settings")
+def admin_academy_settings(auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    a=active_academy(db,auth["academy_id"])
+    return academy_stats_payload(db,a)
+
+@app.put("/api/v3/admin/academy/settings")
+def update_admin_academy_settings(r:AcademyHoursReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    a=active_academy(db,auth["academy_id"])
+    hhmm(r.open_time,"영업 시작시간"); hhmm(r.close_time,"영업 종료시간")
+    a.is_24_hours=r.is_24_hours
+    a.open_time=r.open_time
+    a.close_time=r.close_time
+    db.commit()
+    return academy_stats_payload(db,a)
+
 @app.post("/api/v3/admin/students/new")
 def new_student_without_nfc(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     phone=digits(r.phone_last4,11,"보호자 전화번호"); pin=digits(r.attendance_pin,4,"출석번호")
@@ -1398,7 +1482,7 @@ def attach(r:AttachExisting,auth=Depends(admin_auth),db:Session=Depends(get_db))
 @app.get("/api/v3/admin/students")
 def students(q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
     stmt=select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True))
-    if q.strip(): stmt=stmt.where(or_(Student.name.ilike(f"%{q.strip()}%"),Student.phone_last4.ilike(f"%{q.strip()}%"),StudentAcademy.attendance_pin.ilike(f"%{q.strip()}%")))
+    if q.strip(): stmt=stmt.where(or_(Student.name.ilike(f"%{q.strip()}%"),Student.phone_last4.ilike(f"%{q.strip()}%"),StudentAcademy.attendance_pin.ilike(f"%{q.strip()}%"),StudentAcademy.memo.ilike(f"%{q.strip()}%")))
     rows=db.execute(stmt.order_by(Student.name).limit(1000)).all()
     return [{"student_id":s.id,"link_id":sa.id,"name":s.name,"phone_last4":s.phone_last4,"attendance_pin":sa.attendance_pin,"memo":sa.memo,"extra_code":sa.login_extra_code,"nfc_registered":s.nfc_active} for sa,s in rows]
 @app.put("/api/v3/admin/students/{student_id}")
@@ -1475,25 +1559,21 @@ def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=
 
     local=to_kst(occurred)
 
-    # 관리자 수동출석 연속 입력 방지:
-    # 같은 학원 + 같은 학생 + 같은 입실/퇴실 유형의 MANUAL 기록이
-    # 등록하려는 시간 기준 직전 10분 안에 있으면 중복 등록을 막습니다.
-    duplicate=db.scalar(
-        select(AttendanceEvent.id).where(
+    # 관리자 수동출석도 마지막 출석 처리 후 10분 동안 재처리를 막습니다.
+    # 다음 처리 가능 유형(IN/OUT)을 함께 내려 앱에서 남은 시간 안내를 표시합니다.
+    previous=db.scalar(
+        select(AttendanceEvent).where(
             AttendanceEvent.academy_id==auth["academy_id"],
             AttendanceEvent.student_id==student.id,
-            AttendanceEvent.event_type==r.event_type,
-            AttendanceEvent.source=="MANUAL",
-            AttendanceEvent.occurred_at>=occurred-timedelta(minutes=10),
             AttendanceEvent.occurred_at<=occurred
-        ).limit(1)
+        ).order_by(AttendanceEvent.occurred_at.desc()).limit(1)
     )
-    if duplicate:
-        action="입실" if r.event_type=="IN" else "퇴실"
-        raise HTTPException(
-            409,
-            f"같은 학생의 {action} 수동출석은 10분 이내에 연속 등록할 수 없습니다."
-        )
+    if previous:
+        sec=(occurred-previous.occurred_at).total_seconds()
+        if sec<LOCKOUT_SECONDS:
+            remain=max(1,int((LOCKOUT_SECONDS-sec+59)//60))
+            next_type="OUT" if previous.event_type=="IN" else "IN"
+            raise HTTPException(409,f"DUPLICATE_WAIT:{remain}:{next_type}")
 
     event=AttendanceEvent(
         academy_id=auth["academy_id"],
@@ -1604,12 +1684,27 @@ def attendance(r:AttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_d
         if not row: raise HTTPException(404,"등록된 출석번호가 아닙니다.")
         sa,s=row; source="PIN"
     if not sa: raise HTTPException(403,"이 학원에 등록되지 않은 학생입니다.")
-    now=now_kst().astimezone(timezone.utc); last=db.scalar(select(AttendanceEvent).where(AttendanceEvent.student_id==s.id,AttendanceEvent.academy_id==auth["academy_id"]).order_by(AttendanceEvent.occurred_at.desc()).limit(1))
+    now=now_kst().astimezone(timezone.utc)
+    academy=db.get(Academy,auth["academy_id"])
+    last=db.scalar(select(AttendanceEvent).where(
+        AttendanceEvent.student_id==s.id,
+        AttendanceEvent.academy_id==auth["academy_id"]
+    ).order_by(AttendanceEvent.occurred_at.desc()).limit(1))
     if last:
-        sec=(now-last.occurred_at).total_seconds()
-        if sec<LOCKOUT_SECONDS: raise HTTPException(409,f"DUPLICATE_WAIT:{max(1,int((LOCKOUT_SECONDS-sec+59)//60))}")
-        typ="OUT" if last.event_type=="IN" else "IN"
-    else: typ="IN"
+        # 24시간 운영 학원은 기존 방식 그대로 마지막 상태를 이어갑니다.
+        # 영업시간을 사용하는 학원은 새 영업일이 시작되면 전날 상태와 무관하게 입실부터 시작합니다.
+        new_business_day=(not getattr(academy,"is_24_hours",True)) and last.occurred_at < academy_business_start_utc(academy,now)
+        if new_business_day:
+            typ="IN"
+        else:
+            sec=(now-last.occurred_at).total_seconds()
+            if sec<LOCKOUT_SECONDS:
+                remain=max(1,int((LOCKOUT_SECONDS-sec+59)//60))
+                next_type="OUT" if last.event_type=="IN" else "IN"
+                raise HTTPException(409,f"DUPLICATE_WAIT:{remain}:{next_type}")
+            typ="OUT" if last.event_type=="IN" else "IN"
+    else:
+        typ="IN"
     e=AttendanceEvent(academy_id=auth["academy_id"],student_id=s.id,student_academy_id=sa.id,event_type=typ,source=source,occurred_at=now); db.add(e); db.commit(); db.refresh(e)
     a=db.get(Academy,auth["academy_id"]); action="입실" if typ=="IN" else "퇴실"; when=to_kst(e.occurred_at).strftime("%H:%M")
     tokens=list(db.scalars(select(ParentDevice.push_token).join(ParentLink,ParentLink.device_id==ParentDevice.id).where(ParentLink.student_id==s.id,ParentLink.academy_id==a.id,ParentDevice.push_token.is_not(None))).all())
