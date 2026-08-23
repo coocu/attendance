@@ -112,10 +112,13 @@ def sync_parent_family_links(db:Session,phone:str,device_id:int|None=None):
     if not device_ids:
         return
     family_student_ids=list({student.id for _,student in family_rows})
-    existing_keys=set(db.execute(
-        select(ParentLink.device_id,ParentLink.student_id,ParentLink.academy_id)
-        .where(ParentLink.device_id.in_(device_ids),ParentLink.student_id.in_(family_student_ids))
-    ).all())
+    existing_keys={
+        (did,sid,aid)
+        for did,sid,aid in db.execute(
+            select(ParentLink.device_id,ParentLink.student_id,ParentLink.academy_id)
+            .where(ParentLink.device_id.in_(device_ids),ParentLink.student_id.in_(family_student_ids))
+        ).all()
+    }
     for did in device_ids:
         for sa,student in family_rows:
             key=(did,student.id,sa.academy_id)
