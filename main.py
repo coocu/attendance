@@ -325,12 +325,36 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
   <div id="admin" class="hidden">
     <div class="card between"><div><div id="academyTitle" class="section-title" style="margin:0"></div><div class="small">관리자 관리용 화면</div></div><button class="secondary" onclick="logout()">로그아웃</button></div>
     <div class="tabs">
-      <button id="tabStudents" class="tab on" onclick="showTab('students')">학생관리</button>
+      <button id="tabAcademy" class="tab on" onclick="showTab('academy')">학원관리</button>
+      <button id="tabStudents" class="tab" onclick="showTab('students')">학생관리</button>
       <button id="tabAttendance" class="tab" onclick="showTab('attendance')">출석현황</button>
       <button id="tabPassword" class="tab" onclick="showTab('password')">비밀번호 변경</button>
     </div>
 
-    <section id="studentsPanel">
+    <section id="academyPanel">
+      <div class="card">
+        <div class="section-title">학원관리</div>
+        <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+          <div class="card" style="margin:0"><div class="small">등록 학생</div><div id="academyStatRegistered" style="font-size:28px;font-weight:800;margin-top:8px">-명</div></div>
+          <div class="card" style="margin:0"><div class="small">현재 입실</div><div id="academyStatCurrent" style="font-size:28px;font-weight:800;margin-top:8px">-명</div></div>
+          <div class="card" style="margin:0"><div class="small">오늘 입실</div><div id="academyStatIn" style="font-size:28px;font-weight:800;margin-top:8px">-명</div></div>
+          <div class="card" style="margin:0"><div class="small">오늘 퇴실</div><div id="academyStatOut" style="font-size:28px;font-weight:800;margin-top:8px">-명</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-title">영업시간 설정</div>
+        <label class="row" style="margin-bottom:14px"><input id="academy24Hours" type="checkbox" onchange="academyHoursChanged()" style="width:auto"><span>24시간 운영</span></label>
+        <div id="academyHoursFields" class="grid">
+          <div><div class="small" style="margin-bottom:6px">영업 시작시간</div><input id="academyOpenTime" type="time" value="09:00"></div>
+          <div><div class="small" style="margin-bottom:6px">영업 종료시간</div><input id="academyCloseTime" type="time" value="20:00"></div>
+        </div>
+        <div style="height:12px"></div>
+        <button class="primary" onclick="saveAcademySettings()">영업시간 저장</button>
+        <div id="academySettingsMsg" class="msg"></div>
+      </div>
+    </section>
+
+    <section id="studentsPanel" class="hidden">
       <div class="card">
         <div class="between"><div class="section-title">학생 등록</div><div class="small">NFC 카드가 없어도 먼저 등록할 수 있습니다. NFC는 학생 목록에서 나중에 등록/재등록할 수 있습니다.</div></div>
         <div class="grid3">
@@ -549,7 +573,7 @@ async function selectSearchedAcademy(id,name,region,district){
 }
 async function loadAcademies(){const r=$("region").value,d=$("district").value;if(!r||!d)return;const xs=await api(`/api/v3/academies?region=${encodeURIComponent(r)}&district=${encodeURIComponent(d)}`);$("academy").innerHTML='<option value="">학원</option>'+xs.map(a=>`<option value="${a.id}" data-name="${esc(a.name)}">${esc(a.name)}</option>`).join("")}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
-async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";showAdminNoticeIfNeeded();loadStudents()}catch(e){$("loginMsg").textContent=e.message}}
+async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";showAdminNoticeIfNeeded();showTab("academy")}catch(e){$("loginMsg").textContent=e.message}}
 let recoveryToken="";
 function openForgot(){const id=Number($("academy").value);if(!id){$("loginMsg").textContent="학원을 먼저 선택해주세요.";return;}$("loginMsg").textContent="";$("forgotBox").classList.toggle("hidden");}
 function backToLogin(){
@@ -888,7 +912,39 @@ async function saveNotice(type){
     $("noticeMsg").className="msg ok";
   }catch(e){$("noticeMsg").textContent=e.message;$("noticeMsg").className="msg"}
 }
-function showTab(t){for(const x of ["students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
+function academyHoursChanged(){
+  const is24=$("academy24Hours").checked;
+  $("academyHoursFields").classList.toggle("hidden",is24);
+}
+async function loadAcademySettings(){
+  if(!token)return;
+  try{
+    const d=await api("/api/v3/admin/academy/settings");
+    $("academyStatRegistered").textContent=(d.registered_students||0)+"명";
+    $("academyStatCurrent").textContent=(d.current_in||0)+"명";
+    $("academyStatIn").textContent=(d.today_in||0)+"명";
+    $("academyStatOut").textContent=(d.today_out||0)+"명";
+    $("academy24Hours").checked=!!d.is_24_hours;
+    $("academyOpenTime").value=d.open_time||"09:00";
+    $("academyCloseTime").value=d.close_time||"20:00";
+    academyHoursChanged();
+    $("academySettingsMsg").textContent="";
+  }catch(e){$("academySettingsMsg").textContent=e.message}
+}
+async function saveAcademySettings(){
+  if(!token)return;
+  try{
+    const d=await api("/api/v3/admin/academy/settings",{method:"PUT",body:JSON.stringify({is_24_hours:$("academy24Hours").checked,open_time:$("academyOpenTime").value||"09:00",close_time:$("academyCloseTime").value||"20:00"})});
+    $("academySettingsMsg").textContent="저장되었습니다.";
+    $("academySettingsMsg").className="msg ok";
+    $("academyStatRegistered").textContent=(d.registered_students||0)+"명";
+    $("academyStatCurrent").textContent=(d.current_in||0)+"명";
+    $("academyStatIn").textContent=(d.today_in||0)+"명";
+    $("academyStatOut").textContent=(d.today_out||0)+"명";
+    academyHoursChanged();
+  }catch(e){$("academySettingsMsg").textContent=e.message;$("academySettingsMsg").className="msg"}
+}
+function showTab(t){for(const x of ["academy","students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="academy")loadAcademySettings();if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
 let currentStudents=[];
 async function loadStudents(){
   if(!token)return;
