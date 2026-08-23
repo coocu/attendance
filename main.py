@@ -1804,7 +1804,7 @@ def parent_links(auth=Depends(parent_auth),db:Session=Depends(get_db)):
     for phone in phones:
         sync_parent_family_links(db,phone,auth["device_id"])
     db.commit()
-    rows=db.execute(select(ParentLink,Student,Academy).join(Student,Student.id==ParentLink.student_id).join(Academy,Academy.id==ParentLink.academy_id).where(ParentLink.device_id==auth["device_id"],Academy.is_active.is_(True))).all()
+    rows=db.execute(select(ParentLink,Student,Academy).join(Student,Student.id==ParentLink.student_id).join(Academy,Academy.id==ParentLink.academy_id).join(StudentAcademy,and_(StudentAcademy.student_id==ParentLink.student_id,StudentAcademy.academy_id==ParentLink.academy_id)).where(ParentLink.device_id==auth["device_id"],Academy.is_active.is_(True),StudentAcademy.is_active.is_(True))).all()
     return [{"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name} for l,s,a in rows]
 def month_bounds(y,m):
     if m<1 or m>12: raise HTTPException(400,"월이 올바르지 않습니다.")
