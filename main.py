@@ -1355,7 +1355,11 @@ def new_student_without_nfc(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Sessio
 @app.post("/api/v3/admin/students/duplicate-check")
 def duplicate_student_check(r:StudentIdentityReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     phone=digits(r.phone_last4,11,"보호자 전화번호")
-    s=db.scalar(select(Student).where(Student.name==r.name.strip(),Student.phone_last4==phone))
+    s=db.scalar(
+        select(Student)
+        .where(Student.name==r.name.strip(),Student.phone_last4==phone)
+        .order_by(Student.nfc_active.desc(),Student.id.asc())
+    )
     if not s: return {"duplicate":False}
     own=db.scalar(select(StudentAcademy).where(StudentAcademy.student_id==s.id,StudentAcademy.academy_id==auth["academy_id"],StudentAcademy.is_active.is_(True)))
     return {"duplicate":True,"student_id":s.id,"nfc_registered":bool(s.nfc_active),"already_in_academy":bool(own),"message":"기존 학생 정보를 가져와 등록할 수 있습니다."}
@@ -1414,10 +1418,14 @@ def reset_student_nfc(student_id:int,auth=Depends(admin_auth),db:Session=Depends
 def attach_existing_by_identity(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     phone=digits(r.phone_last4,11,"보호자 전화번호")
     pin=digits(r.attendance_pin,4,"출석번호")
-    s=db.scalar(select(Student).where(
-        Student.name==r.name.strip(),
-        Student.phone_last4==phone
-    ))
+    s=db.scalar(
+        select(Student)
+        .where(
+            Student.name==r.name.strip(),
+            Student.phone_last4==phone
+        )
+        .order_by(Student.nfc_active.desc(),Student.id.asc())
+    )
     if not s:
         raise HTTPException(404,"동일한 이름과 보호자 전화번호로 등록된 기존 학생이 없습니다.")
 
