@@ -6,7 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, or_, func, text
+from sqlalchemy import select, or_, and_, func, text
 from sqlalchemy.orm import Session
 from db import Base, engine, get_db
 from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,Notice
