@@ -60,6 +60,23 @@ def startup():
         conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS is_24_hours BOOLEAN NOT NULL DEFAULT TRUE"))
         conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS open_time VARCHAR(5) NOT NULL DEFAULT '09:00'"))
         conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS close_time VARCHAR(5) NOT NULL DEFAULT '20:00'"))
+        # NFC는 전역 학생 기준 1개 카드 = 1명만 허용합니다.
+        # 기존 DB에 이미 같은 NFC가 여러 학생에게 들어간 경우에는 어느 학생이 실제 소유자인지
+        # 서버가 임의로 결정하지 않고 해당 중복 NFC 연결을 모두 해제하여 오출석을 방지합니다.
+        conn.execute(text("""
+            UPDATE students
+               SET nfc_token = NULL, nfc_active = FALSE, updated_at = NOW()
+             WHERE nfc_token IS NOT NULL
+               AND nfc_token IN (
+                   SELECT nfc_token
+                     FROM students
+                    WHERE nfc_token IS NOT NULL AND BTRIM(nfc_token) <> ''
+                    GROUP BY nfc_token
+                   HAVING COUNT(*) > 1
+               )
+        """))
+        # models.py의 unique=True는 기존 테이블에는 자동 반영되지 않으므로 실제 DB에도 강제합니다.
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_students_nfc_token ON students (nfc_token) WHERE nfc_token IS NOT NULL"))
     with next(get_db()) as db:
         for t in ("regular","emergency"):
             if db.get(Notice,t) is None: db.add(Notice(notice_type=t))
