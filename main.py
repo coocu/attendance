@@ -1516,11 +1516,14 @@ def confirm_student_nfc(student_id:int,r:NfcConfirm,auth=Depends(admin_auth),db:
     if not nt: raise HTTPException(400,"NFC 토큰이 없습니다.")
     previous=(r.previous_nfc_token or "").strip()
     if previous and previous != nt:
-        old_owner=db.scalar(select(Student).where(Student.nfc_token==previous,Student.id!=student_id))
-        if old_owner:
+        # 같은 물리 NFC 카드를 다른 학생에게 재등록하면 이전 소유 학생은 모두 NFC 미등록 처리한다.
+        # 과거 중복 데이터가 남아 있어도 한 명만 해제하지 않고 해당 토큰의 다른 학생 전부를 해제한다.
+        old_owners=db.scalars(select(Student).where(Student.nfc_token==previous,Student.id!=student_id)).all()
+        for old_owner in old_owners:
             old_owner.nfc_token=None
             old_owner.nfc_active=False
             old_owner.updated_at=now_kst().astimezone(timezone.utc)
+        if old_owners:
             db.flush()
     if db.scalar(select(Student).where(Student.nfc_token==nt,Student.id!=student_id)): raise HTTPException(409,"이미 다른 학생에게 사용 중인 NFC 토큰입니다.")
     s.nfc_token=nt; s.nfc_active=True; s.updated_at=now_kst().astimezone(timezone.utc); db.commit(); return {"ok":True,"nfc_registered":True}
