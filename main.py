@@ -1,19 +1,19 @@
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone, timedelta
 from calendar import monthrange
-import secrets, random
+import secrets, random, asyncio
 from fastapi import FastAPI, Depends, HTTPException, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, or_, and_, func, text
 from sqlalchemy.orm import Session
-from db import Base, engine, get_db
+from db import Base, engine, get_db, SessionLocal
 from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,Notice
 from security import hash_password,verify_password,token,read_token
 from auth_adapter import verify_license_key,AuthUnavailable
 from push import send_push
-KST=ZoneInfo("Asia/Seoul"); LOCKOUT_SECONDS=600
+KST=ZoneInfo("Asia/Seoul"); LOCKOUT_SECONDS=600; ATTENDANCE_RETENTION_DAYS=30
 
 def now_kst():
     return datetime.now(KST)
@@ -60,10 +60,55 @@ def startup():
         conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS is_24_hours BOOLEAN NOT NULL DEFAULT TRUE"))
         conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS open_time VARCHAR(5) NOT NULL DEFAULT '09:00'"))
         conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS close_time VARCHAR(5) NOT NULL DEFAULT '20:00'"))
+        conn.execute(text("ALTER TABLE student_academies ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ NULL"))
     with next(get_db()) as db:
         for t in ("regular","emergency"):
             if db.get(Notice,t) is None: db.add(Notice(notice_type=t))
         db.commit()
+
+def attendance_retention_cutoff_utc():
+    return now_kst().astimezone(timezone.utc)-timedelta(days=ATTENDANCE_RETENTION_DAYS)
+
+def cleanup_old_attendance(db:Session):
+    cutoff=attendance_retention_cutoff_utc()
+    return db.query(AttendanceEvent).filter(AttendanceEvent.occurred_at < cutoff).delete(synchronize_session=False)
+
+def parent_visible_link_clause():
+    # 퇴원 당일(한국시간)까지는 학부모 화면에 표시하고 다음 날부터 제외합니다.
+    today=now_kst().replace(hour=0,minute=0,second=0,microsecond=0)
+    tomorrow=today+timedelta(days=1)
+    start=today.astimezone(timezone.utc)
+    end=tomorrow.astimezone(timezone.utc)
+    return or_(
+        StudentAcademy.is_active.is_(True),
+        and_(StudentAcademy.withdrawn_at.is_not(None),StudentAcademy.withdrawn_at>=start,StudentAcademy.withdrawn_at<end)
+    )
+
+_cleanup_task=None
+async def attendance_cleanup_loop():
+    while True:
+        try:
+            with SessionLocal() as db:
+                deleted=cleanup_old_attendance(db)
+                db.commit()
+                if deleted:
+                    print(f"[attendance-cleanup] deleted={deleted}")
+        except Exception as e:
+            print(f"[attendance-cleanup] error={e}")
+        await asyncio.sleep(60*60*6)
+
+@app.on_event("startup")
+async def start_attendance_cleanup():
+    global _cleanup_task
+    _cleanup_task=asyncio.create_task(attendance_cleanup_loop())
+
+@app.on_event("shutdown")
+async def stop_attendance_cleanup():
+    global _cleanup_task
+    if _cleanup_task is not None:
+        _cleanup_task.cancel()
+        _cleanup_task=None
+
 def digits(v,n,label):
     v=v.strip()
     if len(v)!=n or not v.isdigit(): raise HTTPException(400,f"{label}는 숫자 {n}자리여야 합니다.")
@@ -97,7 +142,7 @@ def sync_parent_family_links(db:Session,phone:str,device_id:int|None=None):
     family_rows=db.execute(
         select(StudentAcademy,Student)
         .join(Student,Student.id==StudentAcademy.student_id)
-        .where(Student.phone_last4==phone,StudentAcademy.is_active.is_(True))
+        .where(Student.phone_last4==phone,parent_visible_link_clause())
     ).all()
     if not family_rows: return
     if device_id is None:
@@ -1474,6 +1519,7 @@ def attach_existing_by_identity(r:NewStudentNoNfc,auth=Depends(admin_auth),db:Se
         existing_link.attendance_pin=pin
         existing_link.memo=r.memo.strip()
         existing_link.is_active=True
+        existing_link.withdrawn_at=None
         existing_link.login_extra_code=None
         sa=existing_link
     else:
@@ -1662,7 +1708,9 @@ def remove_from_academy(student_id:int,delete_global:bool=False,auth=Depends(adm
         )):
             break
     sa.attendance_pin=released_pin
-    sa.is_active=False; db.commit(); return {"ok":True,"global_deleted":False,"other_academies":other,"nfc_reusable":other==0}
+    sa.is_active=False
+    sa.withdrawn_at=now_kst().astimezone(timezone.utc)
+    db.commit(); return {"ok":True,"global_deleted":False,"other_academies":other,"nfc_reusable":other==0}
 
 @app.post("/api/v3/admin/attendance/manual")
 def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
@@ -1847,7 +1895,7 @@ def attendance(r:AttendanceReq,background_tasks:BackgroundTasks,auth=Depends(adm
 @app.post("/api/v3/parent/login")
 def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
     a=active_academy(db,r.academy_id); phone=digits(r.phone_last4,11,"보호자 전화번호")
-    rows=db.execute(select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==a.id,StudentAcademy.is_active.is_(True),Student.name==r.name.strip(),Student.phone_last4==phone)).all()
+    rows=db.execute(select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==a.id,parent_visible_link_clause(),Student.name==r.name.strip(),Student.phone_last4==phone)).all()
     if not rows: raise HTTPException(401,"등록된 학생 정보를 확인해 주세요.")
     if len(rows)>1:
         if not r.extra_code: return {"needs_extra_code":True,"message":"동일한 이름과 전화번호 뒷자리를 가진 학생이 있습니다."}
@@ -1881,14 +1929,15 @@ def parent_links(auth=Depends(parent_auth),db:Session=Depends(get_db)):
     for phone in phones:
         sync_parent_family_links(db,phone,auth["device_id"])
     db.commit()
-    rows=db.execute(select(ParentLink,Student,Academy).join(Student,Student.id==ParentLink.student_id).join(Academy,Academy.id==ParentLink.academy_id).join(StudentAcademy,and_(StudentAcademy.student_id==ParentLink.student_id,StudentAcademy.academy_id==ParentLink.academy_id)).where(ParentLink.device_id==auth["device_id"],Academy.is_active.is_(True),StudentAcademy.is_active.is_(True))).all()
+    rows=db.execute(select(ParentLink,Student,Academy).join(Student,Student.id==ParentLink.student_id).join(Academy,Academy.id==ParentLink.academy_id).join(StudentAcademy,and_(StudentAcademy.student_id==ParentLink.student_id,StudentAcademy.academy_id==ParentLink.academy_id)).where(ParentLink.device_id==auth["device_id"],Academy.is_active.is_(True),parent_visible_link_clause())).all()
     return [{"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name} for l,s,a in rows]
 def month_bounds(y,m):
     if m<1 or m>12: raise HTTPException(400,"월이 올바르지 않습니다.")
     start=datetime(y,m,1,tzinfo=KST).astimezone(timezone.utc); end=(datetime(y,m,monthrange(y,m)[1],tzinfo=KST)+timedelta(days=1)).astimezone(timezone.utc); return start,end
 @app.get("/api/v3/parent/attendance")
 def parent_attendance(year:int,month:int,auth=Depends(parent_auth),db:Session=Depends(get_db)):
-    start,end=month_bounds(year,month); permitted=select(ParentLink.student_id).where(ParentLink.device_id==auth["device_id"])
+    cleanup_old_attendance(db); db.commit()
+    start,end=month_bounds(year,month); start=max(start,attendance_retention_cutoff_utc()); permitted=select(ParentLink.student_id).where(ParentLink.device_id==auth["device_id"])
     rows=db.execute(select(AttendanceEvent,Student,Academy).join(Student,Student.id==AttendanceEvent.student_id).join(Academy,Academy.id==AttendanceEvent.academy_id).where(AttendanceEvent.student_id.in_(permitted),AttendanceEvent.occurred_at>=start,AttendanceEvent.occurred_at<end).order_by(AttendanceEvent.occurred_at)).all()
     return [{"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name,"event_type":e.event_type,"occurred_at":to_kst(e.occurred_at).isoformat()} for e,s,a in rows]
 @app.delete("/api/v3/admin/attendance/{event_id}")
@@ -1902,7 +1951,8 @@ def delete_attendance(event_id:int,auth=Depends(admin_auth),db:Session=Depends(g
 
 @app.get("/api/v3/admin/attendance")
 def admin_attendance(year:int,month:int,q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
-    start,end=month_bounds(year,month); stmt=select(AttendanceEvent,Student).join(Student,Student.id==AttendanceEvent.student_id).where(AttendanceEvent.academy_id==auth["academy_id"],AttendanceEvent.occurred_at>=start,AttendanceEvent.occurred_at<end)
+    cleanup_old_attendance(db); db.commit()
+    start,end=month_bounds(year,month); start=max(start,attendance_retention_cutoff_utc()); stmt=select(AttendanceEvent,Student).join(Student,Student.id==AttendanceEvent.student_id).where(AttendanceEvent.academy_id==auth["academy_id"],AttendanceEvent.occurred_at>=start,AttendanceEvent.occurred_at<end)
     if q.strip(): stmt=stmt.where(or_(Student.name.ilike(f"%{q.strip()}%"),Student.phone_last4.ilike(f"%{q.strip()}%")))
     rows=db.execute(stmt.order_by(AttendanceEvent.occurred_at.desc()).limit(10000)).all(); return [{"id":e.id,"student_id":s.id,"student_name":s.name,"phone_last4":s.phone_last4,"event_type":e.event_type,"source":e.source,"occurred_at":to_kst(e.occurred_at).isoformat()} for e,s in rows]
 
