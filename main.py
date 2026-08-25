@@ -651,7 +651,6 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
     <div id="attendanceLiveName" class="attendance-live-name"></div>
     <div id="attendanceLiveAction" class="attendance-live-action"></div>
     <div id="attendanceLiveTime" class="attendance-live-time"></div>
-    <button class="primary attendance-live-close" onclick="hideAttendanceLivePopup()">확인</button>
   </div>
 
 <script>
@@ -779,7 +778,7 @@ function showNextAttendancePopup(){
   $("attendanceLiveAction").textContent=e.event_type==="IN"?"입실했습니다.":"퇴실했습니다.";
   $("attendanceLiveTime").textContent=new Date(e.occurred_at).toLocaleString("ko-KR",{timeZone:"Asia/Seoul",hour:"2-digit",minute:"2-digit"});
   $("attendanceLivePopup").classList.remove("hidden");
-  attendancePopupTimer=setTimeout(hideAttendanceLivePopup,4000);
+  attendancePopupTimer=setTimeout(hideAttendanceLivePopup,500);
 }
 function enqueueAttendancePopup(events){
   if(!attendancePopupEnabled())return;
