@@ -325,7 +325,7 @@ ADMIN_WEB_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>CodeNote 출석관리</title>
+<title>오늘의 출석</title>
 <style>
 :root{--blue:#4169ef;--bg:#f5f5fa;--card:#fff;--line:#e5e7eb;--text:#111827;--muted:#6b7280}
 *{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;background:var(--bg);color:var(--text)}
@@ -344,12 +344,13 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 .pill{display:inline-block;padding:4px 9px;border-radius:999px;background:#eef2ff;color:#395ad7;font-size:12px}
 .small{font-size:13px;color:var(--muted)}.section-title{font-size:18px;font-weight:800;margin:0 0 14px}
 .att-calendar{margin-top:16px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}.att-week,.att-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.att-week div{padding:9px 4px;text-align:center;font-size:12px;font-weight:700;color:var(--muted);background:#fafbff;border-bottom:1px solid var(--line)}.att-day{min-height:72px;padding:7px;border:0;border-right:1px solid #f0f1f5;border-bottom:1px solid #f0f1f5;border-radius:0;background:#fff;color:var(--text);text-align:left}.att-day.empty{background:#fafafa;cursor:default}.att-day.selected{background:#eef2ff;box-shadow:inset 0 0 0 2px var(--blue)}.att-day.today .att-num{color:var(--blue);font-weight:900}.att-num{font-weight:700}.att-count{display:block;margin-top:7px;font-size:11px;color:var(--blue);font-weight:700}.att-selected-title{font-size:15px;font-weight:800;margin:16px 0 8px}
+.attendance-live-popup{position:fixed;top:76px;left:50%;transform:translateX(-50%);z-index:120;width:min(620px,calc(100% - 32px));background:#fff;border:2px solid var(--blue);border-radius:26px;box-shadow:0 18px 60px rgba(17,24,39,.28);padding:28px 30px;text-align:center}.attendance-live-name{font-size:34px;font-weight:900;line-height:1.25}.attendance-live-action{font-size:24px;font-weight:800;color:var(--blue);margin-top:8px}.attendance-live-time{font-size:14px;color:var(--muted);margin-top:8px}.attendance-live-close{margin-top:18px;min-width:120px}
 @media(max-width:720px){.grid,.grid3{grid-template-columns:1fr}.between{align-items:flex-start;flex-direction:column}.tablewrap{overflow:auto}.att-day{min-height:60px;padding:5px}.att-count{font-size:10px}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="head"><div class="logo">C</div><div><h1>CodeNote 출석관리</h1><div class="sub">PC 관리자</div></div></div>
+  <div class="head"><div class="logo">C</div><div><h1>오늘의 출석</h1><div class="sub">PC 관리자</div></div></div>
 
   <div id="loginCard" class="card">
     <div class="section-title">관리자 로그인</div>
@@ -455,7 +456,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 
     <section id="attendancePanel" class="hidden">
       <div class="card">
-        <div class="between"><div class="section-title">월별 출석현황</div><div class="row"><input id="month" type="month" onchange="attendanceMonthChanged()"><input id="attQ" placeholder="이름/전화 검색"><button class="secondary" onclick="loadAttendance()">조회</button></div></div>
+        <div class="between"><div class="section-title">월별 출석현황</div><div class="row"><input id="month" type="month" onchange="attendanceMonthChanged()"><input id="attQ" placeholder="이름/전화 검색"><button class="secondary" onclick="loadAttendance()">조회</button><button id="attendancePopupToggle" class="secondary" onclick="toggleAttendancePopup()">입·퇴실 팝업 해제</button></div></div>
         <div id="attendanceCalendar" class="att-calendar"></div>
         <div id="attendanceSelectedTitle" class="att-selected-title"></div>
         <div class="tablewrap"><table><thead><tr><th>시간</th><th>학생</th><th>전화 뒤4</th><th>상태</th><th>방식</th><th></th></tr></thead><tbody id="attendanceBody"></tbody></table></div>
@@ -646,9 +647,16 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <div id="adminNoticeActions" class="row" style="justify-content:flex-end"></div>
     </div>
   </div>
+  <div id="attendanceLivePopup" class="attendance-live-popup hidden">
+    <div id="attendanceLiveName" class="attendance-live-name"></div>
+    <div id="attendanceLiveAction" class="attendance-live-action"></div>
+    <div id="attendanceLiveTime" class="attendance-live-time"></div>
+    <button class="primary attendance-live-close" onclick="hideAttendanceLivePopup()">확인</button>
+  </div>
 
 <script>
 let token="", academyId=null, academyName="", nfcExisting=false;
+let attendanceLiveCursor=0,attendanceLiveTimer=null,attendancePopupTimer=null,attendancePopupQueue=[],attendancePopupShowing=false;
 const $=id=>document.getElementById(id);
 async function api(path,opt={}){const h={"Content-Type":"application/json",...(opt.headers||{})};if(token)h.Authorization="Bearer "+token;const r=await fetch(path,{...opt,headers:h});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.detail||"서버 오류");return d}
 async function init(){
@@ -680,7 +688,7 @@ async function selectSearchedAcademy(id,name,region,district){
 }
 async function loadAcademies(){const r=$("region").value,d=$("district").value;if(!r||!d)return;const xs=await api(`/api/v3/academies?region=${encodeURIComponent(r)}&district=${encodeURIComponent(d)}`);$("academy").innerHTML='<option value="">학원</option>'+xs.map(a=>`<option value="${a.id}" data-name="${esc(a.name)}">${esc(a.name)}</option>`).join("")}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
-async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";showAdminNoticeIfNeeded();showTab("academy")}catch(e){$("loginMsg").textContent=e.message}}
+async function login(){try{const id=Number($("academy").value);if(!id)throw new Error("학원을 선택해주세요.");const d=await api("/api/v3/admin/login",{method:"POST",body:JSON.stringify({academy_id:id,password:$("password").value})});token=d.access_token;academyId=d.academy_id;academyName=d.academy_name;$("academyTitle").textContent=academyName;$("loginCard").classList.add("hidden");$("admin").classList.remove("hidden");$("loginMsg").textContent="";showAdminNoticeIfNeeded();showTab("academy");await startAttendanceLiveWatch()}catch(e){$("loginMsg").textContent=e.message}}
 let recoveryToken="";
 function openForgot(){const id=Number($("academy").value);if(!id){$("loginMsg").textContent="학원을 먼저 선택해주세요.";return;}$("loginMsg").textContent="";$("forgotBox").classList.toggle("hidden");}
 function backToLogin(){
@@ -746,7 +754,63 @@ function formatGuardianPhone(v){
   const d=String(v||"").replace(/\D/g,"").slice(0,11);
   return d.length===11?`${d.slice(0,3)}-${d.slice(3,7)}-${d.slice(7)}`:d;
 }
-function logout(){token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
+function logout(){stopAttendanceLiveWatch();token="";academyId=null;$("admin").classList.add("hidden");$("loginCard").classList.remove("hidden")}
+
+function attendancePopupStorageKey(){return `attendance_live_popup_enabled_${academyId||0}`}
+function attendancePopupEnabled(){return localStorage.getItem(attendancePopupStorageKey())!=="0"}
+function updateAttendancePopupToggle(){
+  const b=$("attendancePopupToggle");if(!b)return;
+  b.textContent=attendancePopupEnabled()?"입·퇴실 팝업 해제":"입·퇴실 팝업 활성화";
+}
+function toggleAttendancePopup(){
+  localStorage.setItem(attendancePopupStorageKey(),attendancePopupEnabled()?"0":"1");
+  updateAttendancePopupToggle();
+  if(!attendancePopupEnabled()){attendancePopupQueue=[];hideAttendanceLivePopup()}
+}
+function hideAttendanceLivePopup(){
+  if(attendancePopupTimer){clearTimeout(attendancePopupTimer);attendancePopupTimer=null}
+  $("attendanceLivePopup")?.classList.add("hidden");attendancePopupShowing=false;
+  if(attendancePopupQueue.length)setTimeout(showNextAttendancePopup,120);
+}
+function showNextAttendancePopup(){
+  if(attendancePopupShowing||!attendancePopupEnabled()||!attendancePopupQueue.length)return;
+  const e=attendancePopupQueue.shift();attendancePopupShowing=true;
+  $("attendanceLiveName").textContent=`${e.student_name} 학생`;
+  $("attendanceLiveAction").textContent=e.event_type==="IN"?"입실했습니다.":"퇴실했습니다.";
+  $("attendanceLiveTime").textContent=new Date(e.occurred_at).toLocaleString("ko-KR",{timeZone:"Asia/Seoul",hour:"2-digit",minute:"2-digit"});
+  $("attendanceLivePopup").classList.remove("hidden");
+  attendancePopupTimer=setTimeout(hideAttendanceLivePopup,4000);
+}
+function enqueueAttendancePopup(events){
+  if(!attendancePopupEnabled())return;
+  attendancePopupQueue.push(...events);showNextAttendancePopup();
+}
+async function refreshAttendanceDataSilent(){
+  if(!token||$("attendancePanel")?.classList.contains("hidden"))return;
+  try{
+    const [y,m]=$("month").value.split("-");const q=$("attQ").value.trim();
+    attendanceRows=await api(`/api/v3/admin/attendance?year=${y}&month=${Number(m)}&q=${encodeURIComponent(q)}`);
+    renderAttendanceCalendar();renderAttendanceTable();
+  }catch{}
+}
+async function pollAttendanceLive(){
+  if(!token||!academyId)return;
+  try{
+    const d=await api(`/api/v3/admin/attendance/live?after_id=${attendanceLiveCursor}`);
+    attendanceLiveCursor=Math.max(attendanceLiveCursor,Number(d.latest_id||0));
+    const events=Array.isArray(d.events)?d.events:[];
+    if(events.length){enqueueAttendancePopup(events);await refreshAttendanceDataSilent()}
+  }catch{}
+}
+async function startAttendanceLiveWatch(){
+  stopAttendanceLiveWatch();updateAttendancePopupToggle();
+  try{const d=await api("/api/v3/admin/attendance/live?initialize=true");attendanceLiveCursor=Number(d.latest_id||0)}catch{attendanceLiveCursor=0}
+  attendanceLiveTimer=setInterval(pollAttendanceLive,1000);
+}
+function stopAttendanceLiveWatch(){
+  if(attendanceLiveTimer){clearInterval(attendanceLiveTimer);attendanceLiveTimer=null}
+  attendancePopupQueue=[];attendanceLiveCursor=0;hideAttendanceLivePopup();
+}
 
 let adminRegularNotice=null;
 let adminEmergencyNotice=null;
@@ -2222,6 +2286,115 @@ def parent_attendance(year:int,month:int,auth=Depends(parent_auth),db:Session=De
     start,end=month_bounds(year,month); start=max(start,attendance_retention_cutoff_utc()); permitted=select(ParentLink.student_id).where(ParentLink.device_id==auth["device_id"])
     rows=db.execute(select(AttendanceEvent,Student,Academy).join(Student,Student.id==AttendanceEvent.student_id).join(Academy,Academy.id==AttendanceEvent.academy_id).where(AttendanceEvent.student_id.in_(permitted),AttendanceEvent.occurred_at>=start,AttendanceEvent.occurred_at<end).order_by(AttendanceEvent.occurred_at)).all()
     return [{"student_id":s.id,"student_name":s.name,"academy_id":a.id,"academy_name":a.name,"event_type":e.event_type,"occurred_at":to_kst(e.occurred_at).isoformat()} for e,s,a in rows]
+@app.get("/api/v3/admin/attendance/live")
+def admin_attendance_live(after_id:int=0,initialize:bool=False,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    latest_id=db.scalar(select(func.max(AttendanceEvent.id)).where(AttendanceEvent.academy_id==auth["academy_id"])) or 0
+    if initialize:
+        return {"latest_id":latest_id,"events":[]}
+    rows=db.execute(
+        select(AttendanceEvent,Student)
+        .join(Student,Student.id==AttendanceEvent.student_id)
+        .where(
+            AttendanceEvent.academy_id==auth["academy_id"],
+            AttendanceEvent.id>after_id,
+            AttendanceEvent.source.in_(["NFC","PIN"])
+        )
+        .order_by(AttendanceEvent.id.asc())
+        .limit(50)
+    ).all()
+    events=[{
+        "id":e.id,
+        "student_id":s.id,
+        "student_name":s.name,
+        "event_type":e.event_type,
+        "source":e.source,
+        "occurred_at":to_kst(e.occurred_at).isoformat()
+    } for e,s in rows]
+    latest_id=events[-1]["id"] if events else after_id
+    return {"latest_id":latest_id,"events":events}
+
+@app.get("/api/v3/admin/attendance/summary")
+def admin_attendance_summary(date:str,q:str="",auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    cleanup_old_attendance(db); db.commit()
+    academy=db.get(Academy,auth["academy_id"])
+    if not academy:
+        raise HTTPException(404,"학원을 찾을 수 없습니다.")
+    try:
+        base=datetime.strptime(date,"%Y-%m-%d").replace(tzinfo=KST)
+    except ValueError:
+        raise HTTPException(400,"날짜 형식이 올바르지 않습니다.")
+
+    if getattr(academy,"is_24_hours",True):
+        start_local=base.replace(hour=0,minute=0,second=0,microsecond=0)
+    else:
+        h,m=hhmm(getattr(academy,"open_time","09:00"),"영업 시작시간")
+        start_local=base.replace(hour=h,minute=m,second=0,microsecond=0)
+    end_local=start_local+timedelta(days=1)
+    start_utc=start_local.astimezone(timezone.utc)
+    end_utc=end_local.astimezone(timezone.utc)
+
+    history_start=attendance_retention_cutoff_utc() if getattr(academy,"is_24_hours",True) else max(attendance_retention_cutoff_utc(),start_utc)
+    stmt=(
+        select(AttendanceEvent,Student)
+        .join(Student,Student.id==AttendanceEvent.student_id)
+        .where(
+            AttendanceEvent.academy_id==auth["academy_id"],
+            AttendanceEvent.occurred_at>=history_start,
+            AttendanceEvent.occurred_at<end_utc
+        )
+    )
+    if q.strip():
+        term=q.strip()
+        stmt=stmt.where(or_(Student.name.ilike(f"%{term}%"),Student.phone_last4.ilike(f"%{term}%")))
+    rows=db.execute(stmt.order_by(Student.id.asc(),AttendanceEvent.occurred_at.asc(),AttendanceEvent.id.asc())).all()
+
+    grouped={}
+    names={}
+    phones={}
+    for event,student in rows:
+        grouped.setdefault(student.id,[]).append(event)
+        names[student.id]=student.name
+        phones[student.id]=student.phone_last4
+
+    result=[]
+    is_24=getattr(academy,"is_24_hours",True)
+    for student_id,events in grouped.items():
+        prior=None
+        day_events=[]
+        for e in events:
+            if e.occurred_at < start_utc:
+                prior=e
+            elif e.occurred_at < end_utc:
+                day_events.append(e)
+
+        in_event=prior if is_24 and prior is not None and prior.event_type=="IN" else None
+        out_event=None
+        if not day_events and in_event is None:
+            continue
+
+        last_event=in_event
+        for e in day_events:
+            if e.event_type=="IN":
+                in_event=e
+                out_event=None
+            else:
+                out_event=e
+            last_event=e
+
+        if last_event is None:
+            continue
+        result.append({
+            "student_id":student_id,
+            "student_name":names[student_id],
+            "phone_last4":phones[student_id],
+            "in_event_id":in_event.id if in_event is not None else None,
+            "out_event_id":out_event.id if out_event is not None else None,
+            "in_at":to_kst(in_event.occurred_at).isoformat() if in_event is not None else None,
+            "out_at":to_kst(out_event.occurred_at).isoformat() if out_event is not None else None,
+            "last_at":to_kst(last_event.occurred_at).isoformat()
+        })
+    return result
+
 @app.delete("/api/v3/admin/attendance/{event_id}")
 def delete_attendance(event_id:int,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     event=db.get(AttendanceEvent,event_id)
