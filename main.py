@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, or_, and_, func, text
 from sqlalchemy.orm import Session
 from db import Base, engine, get_db, SessionLocal
-from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,Notice
+from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,Notice,AcademyNotice,AcademyNoticeTemplate
 from security import hash_password,verify_password,token,read_token
 from auth_adapter import verify_license_key,AuthUnavailable
 from push import send_push
@@ -214,6 +214,8 @@ class AttendanceReq(BaseModel): nfc_token:str|None=None; attendance_pin:str|None
 class ManualAttendanceReq(BaseModel): student_id:int; event_type:str; occurred_at:datetime
 class AcademyHoursReq(BaseModel): is_24_hours:bool; open_time:str="09:00"; close_time:str="20:00"
 class NoticeWrite(BaseModel): management_token:str; notice_type:str; content:str; is_active:bool
+class AcademyParentNoticeSaveReq(BaseModel): notice_type:str; content:str; is_active:bool
+class AcademyNoticeTemplateSaveReq(BaseModel): slot:int; content:str
 
 # 코드노트 공지 앱(기존 MusyncNotice) 호환용 요청 모델
 class NoticeManagementSaveReq(BaseModel):
@@ -337,7 +339,7 @@ textarea{min-height:80px;resize:vertical}button{border:0;border-radius:12px;padd
 .primary{background:var(--blue);color:#fff;font-weight:700}.secondary{background:#eef2ff;color:var(--blue);font-weight:700}.danger{background:#fff0f0;color:#c62828}
 .row{display:flex;gap:10px;align-items:center}.between{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .hidden{display:none!important}.msg{margin-top:10px;color:#c62828;font-size:14px}.ok{color:#177245}
-.tabs{display:flex;gap:8px;margin:0 0 18px}.tab{background:#e9ebf2;color:#4b5563}.tab.on{background:var(--blue);color:#fff}
+.tabs{display:flex;gap:8px;margin:0 0 18px;flex-wrap:wrap}.tab{background:#e9ebf2;color:#4b5563;flex:1;min-width:110px}.tab.on{background:var(--blue);color:#fff}
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px;border-bottom:1px solid #eee;font-size:14px}th{color:#6b7280}
 .pill{display:inline-block;padding:4px 9px;border-radius:999px;background:#eef2ff;color:#395ad7;font-size:12px}
 .small{font-size:13px;color:var(--muted)}.section-title{font-size:18px;font-weight:800;margin:0 0 14px}
@@ -401,6 +403,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <button id="tabAcademy" class="tab on" onclick="showTab('academy')">학원관리</button>
       <button id="tabStudents" class="tab" onclick="showTab('students')">학생관리</button>
       <button id="tabAttendance" class="tab" onclick="showTab('attendance')">출석현황</button>
+      <button id="tabNotices" class="tab" onclick="showTab('notices')">공지</button>
       <button id="tabPassword" class="tab" onclick="showTab('password')">비밀번호 변경</button>
     </div>
 
@@ -456,6 +459,37 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
         <div id="attendanceCalendar" class="att-calendar"></div>
         <div id="attendanceSelectedTitle" class="att-selected-title"></div>
         <div class="tablewrap"><table><thead><tr><th>시간</th><th>학생</th><th>전화 뒤4</th><th>상태</th><th>방식</th><th></th></tr></thead><tbody id="attendanceBody"></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="noticesPanel" class="hidden">
+      <div class="card">
+        <div class="between">
+          <div>
+            <div class="section-title" style="margin:0">학부모 공지</div>
+            <div class="small">이 학원에 등록된 학부모에게만 표시됩니다. 활성 상태로 새 내용을 저장하면 해당 학부모 기기에 공지 도착 알림이 전송됩니다.</div>
+          </div>
+          <select id="parentNoticeType" style="max-width:180px" onchange="selectParentNoticeType()">
+            <option value="regular">일반공지</option>
+            <option value="emergency">긴급공지</option>
+          </select>
+        </div>
+        <div style="height:14px"></div>
+        <label class="row" style="margin-bottom:10px"><input id="parentNoticeActive" type="checkbox" style="width:auto"><span>공지 활성화</span></label>
+        <textarea id="parentNoticeContent" style="min-height:240px" placeholder="공지 내용을 입력해주세요."></textarea>
+        <div class="small" style="margin-top:8px">일반공지는 학부모가 ‘오늘 하루 보지 않기’ 또는 ‘닫기’를 선택할 수 있고, 긴급공지는 ‘닫기’만 표시되며 앱에 들어올 때마다 다시 나타납니다.</div>
+        <div class="row" style="margin-top:14px;flex-wrap:wrap">
+          <button class="primary" onclick="saveParentNotice()">공지 저장</button>
+          <button class="danger" onclick="clearParentNotice()">현재 공지내용 지우기</button>
+        </div>
+        <div id="parentNoticeMsg" class="msg"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">자주 쓰는 문구</div>
+        <div class="small" style="margin-bottom:12px">학원별로 최대 3개까지 저장됩니다.</div>
+        <div id="parentNoticeTemplates"></div>
+        <div id="parentTemplateMsg" class="msg"></div>
       </div>
     </section>
 
@@ -985,6 +1019,77 @@ async function saveNotice(type){
     $("noticeMsg").className="msg ok";
   }catch(e){$("noticeMsg").textContent=e.message;$("noticeMsg").className="msg"}
 }
+let parentNoticeAdminState={regular:{content:"",is_active:false},emergency:{content:"",is_active:false},templates:[]};
+function renderParentNoticeTemplates(){
+  const bySlot={};(parentNoticeAdminState.templates||[]).forEach(x=>bySlot[x.slot]=x.content||"");
+  $("parentNoticeTemplates").innerHTML=[1,2,3].map(slot=>`<div class="card" style="box-shadow:none;padding:14px;margin-bottom:10px">
+    <div class="small" style="margin-bottom:6px">문구 ${slot}</div>
+    <textarea id="parentTemplate${slot}" style="min-height:86px" placeholder="자주 쓰는 문구 ${slot}">${esc(bySlot[slot]||"")}</textarea>
+    <div class="row" style="margin-top:8px;flex-wrap:wrap">
+      <button class="secondary" onclick="useParentNoticeTemplate(${slot})">공지에 넣기</button>
+      <button class="secondary" onclick="saveParentNoticeTemplate(${slot})">문구 저장</button>
+      <button class="danger" onclick="deleteParentNoticeTemplate(${slot})">삭제</button>
+    </div>
+  </div>`).join("");
+}
+function selectParentNoticeType(){
+  const kind=$("parentNoticeType").value;
+  const row=parentNoticeAdminState[kind]||{};
+  $("parentNoticeContent").value=row.content||"";
+  $("parentNoticeActive").checked=!!row.is_active;
+  $("parentNoticeMsg").textContent="";
+}
+async function loadParentNoticeAdmin(){
+  if(!token)return;
+  try{
+    parentNoticeAdminState=await api("/api/v3/admin/parent-notices");
+    selectParentNoticeType();
+    renderParentNoticeTemplates();
+    $("parentNoticeMsg").textContent="";
+  }catch(e){$("parentNoticeMsg").textContent=e.message;$("parentNoticeMsg").className="msg"}
+}
+async function saveParentNotice(){
+  if(!token)return;
+  const kind=$("parentNoticeType").value;
+  try{
+    const d=await api("/api/v3/admin/parent-notices",{method:"POST",body:JSON.stringify({notice_type:kind,content:$("parentNoticeContent").value,is_active:$("parentNoticeActive").checked})});
+    parentNoticeAdminState[kind]=d;
+    $("parentNoticeMsg").textContent=d.notification_scheduled?`저장되었습니다. 공지 알림을 ${d.recipient_devices||0}대 기기에 전송 요청했습니다.`:"저장되었습니다.";
+    $("parentNoticeMsg").className="msg ok";
+  }catch(e){$("parentNoticeMsg").textContent=e.message;$("parentNoticeMsg").className="msg"}
+}
+async function clearParentNotice(){
+  const kind=$("parentNoticeType").value;
+  if(!confirm("현재 공지내용을 지우고 비활성화하시겠습니까?"))return;
+  try{
+    await api(`/api/v3/admin/parent-notices/${kind}/clear`,{method:"POST",body:JSON.stringify({})});
+    await loadParentNoticeAdmin();
+    $("parentNoticeMsg").textContent="현재 공지내용을 지웠습니다.";
+    $("parentNoticeMsg").className="msg ok";
+  }catch(e){$("parentNoticeMsg").textContent=e.message;$("parentNoticeMsg").className="msg"}
+}
+function useParentNoticeTemplate(slot){
+  const value=$("parentTemplate"+slot).value||"";
+  if(!value.trim()){$("parentTemplateMsg").textContent="저장된 문구가 없습니다.";return;}
+  $("parentNoticeContent").value=value;
+  $("parentTemplateMsg").textContent=`문구 ${slot}을 공지 내용에 불러왔습니다.`;
+  $("parentTemplateMsg").className="msg ok";
+}
+async function saveParentNoticeTemplate(slot){
+  try{
+    const d=await api("/api/v3/admin/parent-notice-templates",{method:"POST",body:JSON.stringify({slot:slot,content:$("parentTemplate"+slot).value})});
+    const rest=(parentNoticeAdminState.templates||[]).filter(x=>x.slot!==slot);rest.push({slot:slot,content:d.content});parentNoticeAdminState.templates=rest.sort((a,b)=>a.slot-b.slot);
+    $("parentTemplateMsg").textContent=`문구 ${slot}을 저장했습니다.`;$("parentTemplateMsg").className="msg ok";
+  }catch(e){$("parentTemplateMsg").textContent=e.message;$("parentTemplateMsg").className="msg"}
+}
+async function deleteParentNoticeTemplate(slot){
+  try{
+    await api(`/api/v3/admin/parent-notice-templates/${slot}`,{method:"DELETE"});
+    parentNoticeAdminState.templates=(parentNoticeAdminState.templates||[]).filter(x=>x.slot!==slot);
+    renderParentNoticeTemplates();
+    $("parentTemplateMsg").textContent=`문구 ${slot}을 삭제했습니다.`;$("parentTemplateMsg").className="msg ok";
+  }catch(e){$("parentTemplateMsg").textContent=e.message;$("parentTemplateMsg").className="msg"}
+}
 function academyHoursChanged(){
   const is24=$("academy24Hours").checked;
   $("academyHoursFields").classList.toggle("hidden",is24);
@@ -1017,7 +1122,7 @@ async function saveAcademySettings(){
     academyHoursChanged();
   }catch(e){$("academySettingsMsg").textContent=e.message;$("academySettingsMsg").className="msg"}
 }
-function showTab(t){for(const x of ["academy","students","attendance","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="academy")loadAcademySettings();if(t==="students")loadStudents();if(t==="attendance")loadAttendance()}
+function showTab(t){for(const x of ["academy","students","attendance","notices","password"]){$(x+"Panel").classList.toggle("hidden",x!==t);$("tab"+x[0].toUpperCase()+x.slice(1)).classList.toggle("on",x===t)}if(t==="academy")loadAcademySettings();if(t==="students")loadStudents();if(t==="attendance")loadAttendance();if(t==="notices")loadParentNoticeAdmin()}
 let currentStudents=[];
 async function loadStudents(){
   if(!token)return;
@@ -1891,6 +1996,183 @@ def attendance(r:AttendanceReq,background_tasks:BackgroundTasks,auth=Depends(adm
         {"student_id":str(s.id),"academy_id":str(a.id),"event_type":typ}
     )
     return {"ok":True,"student_id":s.id,"student_name":s.name,"event_type":typ,"source":source,"occurred_at":to_kst(e.occurred_at).isoformat(),"lockout_minutes":10}
+
+def _academy_notice_kind(value:str):
+    kind=value.strip().lower()
+    if kind not in {"regular","emergency"}:
+        raise HTTPException(400,"공지 종류가 올바르지 않습니다.")
+    return kind
+
+def _academy_notice_row(db:Session,academy_id:int,notice_type:str):
+    return db.scalar(select(AcademyNotice).where(
+        AcademyNotice.academy_id==academy_id,
+        AcademyNotice.notice_type==notice_type
+    ))
+
+def _academy_notice_item(row:AcademyNotice|None,notice_type:str):
+    if row is None:
+        return {"type":notice_type,"content":"","is_active":False,"updated_at":None}
+    return {
+        "type":row.notice_type,
+        "content":row.content,
+        "is_active":bool(row.is_active),
+        "updated_at":to_kst(row.updated_at).isoformat() if row.updated_at else None,
+    }
+
+def _academy_notice_state(db:Session,academy_id:int):
+    rows={n.notice_type:n for n in db.scalars(
+        select(AcademyNotice).where(AcademyNotice.academy_id==academy_id)
+    ).all()}
+    templates=list(db.scalars(
+        select(AcademyNoticeTemplate)
+        .where(AcademyNoticeTemplate.academy_id==academy_id)
+        .order_by(AcademyNoticeTemplate.slot)
+    ).all())
+    return {
+        "regular":_academy_notice_item(rows.get("regular"),"regular"),
+        "emergency":_academy_notice_item(rows.get("emergency"),"emergency"),
+        "templates":[{"slot":t.slot,"content":t.content} for t in templates],
+    }
+
+def _academy_parent_push_tokens(db:Session,academy_id:int):
+    rows=db.scalars(
+        select(ParentDevice.push_token)
+        .distinct()
+        .join(ParentLink,ParentLink.device_id==ParentDevice.id)
+        .join(StudentAcademy,and_(
+            StudentAcademy.student_id==ParentLink.student_id,
+            StudentAcademy.academy_id==ParentLink.academy_id
+        ))
+        .where(
+            ParentLink.academy_id==academy_id,
+            parent_visible_link_clause(),
+            ParentDevice.push_token.is_not(None)
+        )
+    ).all()
+    return [x for x in rows if x and str(x).strip()]
+
+@app.get("/api/v3/admin/parent-notices")
+def admin_parent_notices(auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    return _academy_notice_state(db,auth["academy_id"])
+
+@app.post("/api/v3/admin/parent-notices")
+def save_admin_parent_notice(r:AcademyParentNoticeSaveReq,background_tasks:BackgroundTasks,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    academy_id=auth["academy_id"]
+    kind=_academy_notice_kind(r.notice_type)
+    content=r.content.strip()
+    if r.is_active and not content:
+        raise HTTPException(400,"활성화할 공지 내용을 입력해주세요.")
+    row=_academy_notice_row(db,academy_id,kind)
+    previous_content=row.content if row else ""
+    previous_active=bool(row.is_active) if row else False
+    if row is None:
+        row=AcademyNotice(academy_id=academy_id,notice_type=kind)
+    changed=(previous_content!=content) or (previous_active!=bool(r.is_active))
+    should_notify=bool(r.is_active) and bool(content) and ((not previous_active) or previous_content!=content)
+    row.content=content
+    row.is_active=bool(r.is_active)
+    if changed:
+        row.updated_at=now_kst().astimezone(timezone.utc)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    notified=0
+    if should_notify:
+        academy=db.get(Academy,academy_id)
+        tokens=_academy_parent_push_tokens(db,academy_id)
+        notified=len(tokens)
+        if academy and tokens:
+            label="긴급공지" if kind=="emergency" else "일반공지"
+            background_tasks.add_task(
+                send_push,
+                tokens,
+                academy.name,
+                f"{label}가 도착했습니다.",
+                {"kind":"academy_notice","academy_id":str(academy_id),"notice_type":kind}
+            )
+    result=_academy_notice_item(row,kind)
+    result.update({"ok":True,"notification_scheduled":should_notify,"recipient_devices":notified})
+    return result
+
+@app.post("/api/v3/admin/parent-notices/{notice_type}/clear")
+def clear_admin_parent_notice(notice_type:str,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    academy_id=auth["academy_id"]
+    kind=_academy_notice_kind(notice_type)
+    row=_academy_notice_row(db,academy_id,kind)
+    if row is None:
+        row=AcademyNotice(academy_id=academy_id,notice_type=kind)
+    row.content=""
+    row.is_active=False
+    row.updated_at=now_kst().astimezone(timezone.utc)
+    db.add(row)
+    db.commit()
+    return {"ok":True,**_academy_notice_item(row,kind)}
+
+@app.post("/api/v3/admin/parent-notice-templates")
+def save_admin_parent_notice_template(r:AcademyNoticeTemplateSaveReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    if r.slot not in {1,2,3}:
+        raise HTTPException(400,"자주 쓰는 문구는 1~3번까지만 저장할 수 있습니다.")
+    content=r.content.strip()
+    if not content:
+        raise HTTPException(400,"자주 쓰는 문구 내용을 입력해주세요.")
+    row=db.scalar(select(AcademyNoticeTemplate).where(
+        AcademyNoticeTemplate.academy_id==auth["academy_id"],
+        AcademyNoticeTemplate.slot==r.slot
+    ))
+    if row is None:
+        row=AcademyNoticeTemplate(academy_id=auth["academy_id"],slot=r.slot)
+    row.content=content
+    row.updated_at=now_kst().astimezone(timezone.utc)
+    db.add(row)
+    db.commit()
+    return {"ok":True,"slot":row.slot,"content":row.content}
+
+@app.delete("/api/v3/admin/parent-notice-templates/{slot}")
+def delete_admin_parent_notice_template(slot:int,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    if slot not in {1,2,3}:
+        raise HTTPException(400,"자주 쓰는 문구 번호가 올바르지 않습니다.")
+    row=db.scalar(select(AcademyNoticeTemplate).where(
+        AcademyNoticeTemplate.academy_id==auth["academy_id"],
+        AcademyNoticeTemplate.slot==slot
+    ))
+    if row:
+        db.delete(row)
+        db.commit()
+    return {"ok":True}
+
+@app.get("/api/v3/parent/notices")
+def parent_academy_notices(auth=Depends(parent_auth),db:Session=Depends(get_db)):
+    academy_ids=select(ParentLink.academy_id).join(
+        StudentAcademy,and_(
+            StudentAcademy.student_id==ParentLink.student_id,
+            StudentAcademy.academy_id==ParentLink.academy_id
+        )
+    ).where(
+        ParentLink.device_id==auth["device_id"],
+        parent_visible_link_clause()
+    ).distinct()
+    rows=db.execute(
+        select(AcademyNotice,Academy)
+        .join(Academy,Academy.id==AcademyNotice.academy_id)
+        .where(
+            AcademyNotice.academy_id.in_(academy_ids),
+            AcademyNotice.is_active.is_(True),
+            Academy.is_active.is_(True)
+        )
+    ).all()
+    result=[]
+    for notice,academy in rows:
+        if not notice.content.strip():
+            continue
+        result.append({
+            "academy_id":academy.id,
+            "academy_name":academy.name,
+            "type":notice.notice_type,
+            "content":notice.content,
+            "updated_at":to_kst(notice.updated_at).isoformat() if notice.updated_at else "",
+        })
+    result.sort(key=lambda x:(0 if x["type"]=="emergency" else 1,x["academy_name"],x["updated_at"]))
+    return result
 
 @app.post("/api/v3/parent/login")
 def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
