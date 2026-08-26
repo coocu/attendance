@@ -778,7 +778,7 @@ function showNextAttendancePopup(){
   $("attendanceLiveAction").textContent=e.event_type==="IN"?"입실했습니다.":"퇴실했습니다.";
   $("attendanceLiveTime").textContent=new Date(e.occurred_at).toLocaleString("ko-KR",{timeZone:"Asia/Seoul",hour:"2-digit",minute:"2-digit"});
   $("attendanceLivePopup").classList.remove("hidden");
-  attendancePopupTimer=setTimeout(hideAttendanceLivePopup,1000);
+  attendancePopupTimer=setTimeout(hideAttendanceLivePopup,1500);
 }
 function enqueueAttendancePopup(events){
   if(!attendancePopupEnabled())return;
