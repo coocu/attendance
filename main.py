@@ -196,7 +196,7 @@ def release_inactive_attendance_pin(db:Session, academy_id:int, attendance_pin:s
 class KeyReq(BaseModel): license_key:str
 class AcademyCreate(BaseModel): registration_token:str; name:str; region:str; district:str; admin_password:str=Field(min_length=4); recovery_name:str; recovery_phone_last4:str
 class AdminLoginReq(BaseModel): academy_id:int; password:str
-class ParentLoginReq(BaseModel): academy_id:int; name:str; phone_last4:str; extra_code:str|None=None; installation_id:str; platform:str="android"; push_token:str|None=None
+class ParentLoginReq(BaseModel): academy_id:int|None=None; name:str; phone_last4:str; extra_code:str|None=None; installation_id:str; platform:str="android"; push_token:str|None=None
 class PushTokenReq(BaseModel): push_token:str
 class ChangePw(BaseModel): current_password:str; new_password:str=Field(min_length=4)
 class RecoveryVerify(BaseModel): academy_id:int; recovery_name:str; recovery_phone_last4:str; license_key:str
@@ -2239,14 +2239,33 @@ def parent_academy_notices(auth=Depends(parent_auth),db:Session=Depends(get_db))
 
 @app.post("/api/v3/parent/login")
 def parent_login(r:ParentLoginReq,db:Session=Depends(get_db)):
-    a=active_academy(db,r.academy_id); phone=digits(r.phone_last4,11,"보호자 전화번호")
-    rows=db.execute(select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==a.id,parent_visible_link_clause(),Student.name==r.name.strip(),Student.phone_last4==phone)).all()
-    if not rows: raise HTTPException(401,"등록된 학생 정보를 확인해 주세요.")
-    if len(rows)>1:
-        if not r.extra_code: return {"needs_extra_code":True,"message":"동일한 이름과 전화번호 뒷자리를 가진 학생이 있습니다."}
-        rows=[x for x in rows if x[0].login_extra_code==r.extra_code.strip()]
-        if len(rows)!=1: raise HTTPException(401,"추가코드가 올바르지 않습니다.")
-    sa,s=rows[0]
+    phone=digits(r.phone_last4,11,"보호자 전화번호")
+    if r.academy_id is not None:
+        # 기존 앱 호환: 학원 ID를 보내는 요청은 기존 로그인 방식 그대로 처리합니다.
+        a=active_academy(db,r.academy_id)
+        rows=db.execute(select(StudentAcademy,Student).join(Student,Student.id==StudentAcademy.student_id).where(StudentAcademy.academy_id==a.id,parent_visible_link_clause(),Student.name==r.name.strip(),Student.phone_last4==phone)).all()
+        if not rows: raise HTTPException(401,"등록된 학생 정보를 확인해 주세요.")
+        if len(rows)>1:
+            if not r.extra_code: return {"needs_extra_code":True,"message":"동일한 이름과 전화번호 뒷자리를 가진 학생이 있습니다."}
+            rows=[x for x in rows if x[0].login_extra_code==r.extra_code.strip()]
+            if len(rows)!=1: raise HTTPException(401,"추가코드가 올바르지 않습니다.")
+        sa,s=rows[0]
+    else:
+        # 통합 학부모 로그인: 학원 선택 없이 학생 이름 + 보호자 전화번호 11자리로 찾습니다.
+        row=db.execute(
+            select(StudentAcademy,Student,Academy)
+            .join(Student,Student.id==StudentAcademy.student_id)
+            .join(Academy,Academy.id==StudentAcademy.academy_id)
+            .where(
+                parent_visible_link_clause(),
+                Academy.is_active.is_(True),
+                Student.name==r.name.strip(),
+                Student.phone_last4==phone
+            )
+            .order_by(StudentAcademy.id)
+        ).first()
+        if not row: raise HTTPException(401,"등록된 학생 정보를 확인해 주세요.")
+        sa,s,a=row
     d=db.scalar(select(ParentDevice).where(ParentDevice.installation_id==r.installation_id,ParentDevice.platform==r.platform))
     if not d: d=ParentDevice(installation_id=r.installation_id,platform=r.platform,push_token=r.push_token); db.add(d); db.flush()
     else: d.push_token=r.push_token or d.push_token; d.updated_at=now_kst().astimezone(timezone.utc)
