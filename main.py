@@ -337,6 +337,16 @@ h1{font-size:26px;margin:0}.sub{color:var(--muted);margin-top:4px}
 input,select,textarea,button{font:inherit}input,select,textarea{width:100%;padding:13px 14px;border:1px solid #d7dbe5;border-radius:12px;background:#fff}
 textarea{min-height:80px;resize:vertical}button{border:0;border-radius:12px;padding:13px 17px;cursor:pointer}
 .primary{background:var(--blue);color:#fff;font-weight:700}.secondary{background:#eef2ff;color:var(--blue);font-weight:700}.danger{background:#fff0f0;color:#c62828}
+#loginCard{width:min(470px,100%);margin:18px auto 22px;padding:28px 26px;border-radius:28px;box-shadow:0 14px 42px rgba(17,24,39,.08)}
+#loginCard .section-title{text-align:center;font-size:22px;margin-bottom:20px}
+#loginCard input,#loginCard select{height:56px;border-radius:16px;padding:0 16px}
+.login-location-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.login-location-grid #academy{grid-column:1/-1}
+.login-action{width:100%;height:56px;border-radius:17px;font-weight:800;font-size:16px}
+.login-outline{background:#fff;color:var(--blue);border:1.5px solid var(--blue)}
+.login-forgot{display:block;width:100%;background:transparent;color:var(--blue);padding:11px 0 2px;font-size:14px}
+.login-divider{height:1px;background:var(--line);margin:18px 0}
+@media(max-width:520px){#loginCard{padding:24px 20px;border-radius:24px}.login-location-grid{grid-template-columns:1fr}.login-location-grid #academy{grid-column:auto}}
 .row{display:flex;gap:10px;align-items:center}.between{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .hidden{display:none!important}.msg{margin-top:10px;color:#c62828;font-size:14px}.ok{color:#177245}
 .tabs{display:flex;gap:8px;margin:0 0 18px;flex-wrap:wrap}.tab{background:#e9ebf2;color:#4b5563;flex:1;min-width:110px}.tab.on{background:var(--blue);color:#fff}
@@ -356,20 +366,23 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
     <div class="section-title">관리자 로그인</div>
 
     <input id="academyQ" placeholder="학원 이름 검색" autocomplete="off">
-    <div id="academySearchResults" class="hidden" style="margin-top:8px;border:1px solid var(--line);border-radius:12px;background:#fff;overflow:hidden"></div>
+    <div id="academySearchResults" class="hidden" style="margin-top:8px;border:1px solid var(--line);border-radius:16px;background:#fff;overflow:hidden"></div>
 
     <div style="height:12px"></div>
-    <div class="grid3">
+    <div class="login-location-grid">
       <select id="region"><option value="">지역</option></select>
       <select id="district"><option value="">시·군·구</option></select>
       <select id="academy"><option value="">학원</option></select>
     </div>
     <div style="height:12px"></div>
     <input id="password" type="password" placeholder="관리자 비밀번호">
-    <div style="height:12px"></div>
-    <button class="primary" onclick="login()">관리자 로그인</button>
-    <button style="background:transparent;color:var(--blue);padding:10px 0 0" onclick="openForgot()">비밀번호를 잊으셨나요?</button>
-    <button class="secondary" style="margin-top:10px" onclick="openAcademyManagement()">학원 관리</button>
+    <div style="height:14px"></div>
+    <button class="primary login-action" onclick="login()">로그인</button>
+    <button class="login-forgot" onclick="openForgot()">비밀번호를 잊으셨나요?</button>
+    <div class="login-divider"></div>
+    <button class="login-action login-outline" onclick="openAcademyRegistration()">학원등록</button>
+    <div style="height:10px"></div>
+    <button class="login-action login-outline" onclick="openAcademyManagement()">학원관리</button>
     <div id="loginMsg" class="msg"></div>
 
     <div id="forgotBox" class="hidden" style="margin-top:18px;padding-top:18px;border-top:1px solid var(--line)">
@@ -575,6 +588,46 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <div id="editManagedAcademyMsg" class="msg"></div>
       <div style="height:12px"></div>
       <button class="primary" style="width:100%" onclick="saveManagedAcademyEdit()">수정 완료</button>
+    </div>
+  </div>
+
+  <div id="academyRegistrationBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:61;padding:24px;display:flex;align-items:center;justify-content:center">
+    <div class="card" style="width:min(520px,100%);max-height:90vh;overflow:auto;margin:0;border-radius:28px">
+      <div class="between">
+        <div>
+          <div class="section-title" style="margin:0">학원등록</div>
+          <div class="small">모바일 앱과 동일한 등록정보를 입력해주세요.</div>
+        </div>
+        <button class="secondary" onclick="closeAcademyRegistration()">닫기</button>
+      </div>
+
+      <div id="registrationAuthBox" style="margin-top:18px">
+        <input id="registrationKey" type="password" placeholder="인증키">
+        <div style="height:10px"></div>
+        <button class="primary login-action" onclick="verifyAcademyRegistration()">인증</button>
+        <div id="registrationAuthMsg" class="msg"></div>
+      </div>
+
+      <div id="registrationContent" class="hidden" style="margin-top:18px">
+        <div class="grid">
+          <select id="registrationRegion" onchange="registrationRegionChanged()"><option value="">지역 선택</option></select>
+          <select id="registrationDistrict"><option value="">시·군·구 선택</option></select>
+        </div>
+        <div style="height:10px"></div>
+        <input id="registrationAcademyName" placeholder="학원 이름">
+        <div style="height:10px"></div>
+        <input id="registrationAdminPassword" type="password" placeholder="관리자 비밀번호 (4자리 이상)">
+        <div style="height:10px"></div>
+        <input id="registrationAdminPassword2" type="password" placeholder="관리자 비밀번호 확인">
+        <div style="height:10px"></div>
+        <input id="registrationRecoveryName" placeholder="최초 관리자 성함">
+        <div style="height:10px"></div>
+        <input id="registrationRecoveryPhone" maxlength="4" inputmode="numeric" placeholder="관리자 전화번호 끝 4자리">
+        <div class="small" style="margin-top:8px">비밀번호 찾기에 사용할 최초 관리자 정보입니다.</div>
+        <div style="height:14px"></div>
+        <button class="primary login-action" onclick="registerAcademyNow()">학원 등록</button>
+        <div id="registrationMsg" class="msg"></div>
+      </div>
     </div>
   </div>
 
@@ -889,6 +942,76 @@ function closeEmergencyAdminNotice(){
   }
 }
 
+
+let academyRegistrationToken="";
+
+function openAcademyRegistration(){
+  academyRegistrationToken="";
+  $("registrationKey").value="";
+  $("registrationAuthMsg").textContent="";
+  $("registrationMsg").textContent="";
+  $("registrationAuthBox").classList.remove("hidden");
+  $("registrationContent").classList.add("hidden");
+  $("registrationRegion").innerHTML='<option value="">지역 선택</option>'+ALL_KOREA_REGIONS.map(x=>`<option>${esc(x)}</option>`).join("");
+  $("registrationDistrict").innerHTML='<option value="">시·군·구 선택</option>';
+  $("academyRegistrationBox").classList.remove("hidden");
+}
+function closeAcademyRegistration(){
+  $("academyRegistrationBox").classList.add("hidden");
+  academyRegistrationToken="";
+}
+function registrationRegionChanged(){
+  const r=$("registrationRegion").value;
+  const ds=ALL_KOREA_DISTRICTS[r]||[];
+  $("registrationDistrict").innerHTML='<option value="">시·군·구 선택</option>'+ds.map(x=>`<option>${esc(x)}</option>`).join("");
+}
+async function verifyAcademyRegistration(){
+  try{
+    const key=$("registrationKey").value.trim();
+    if(!key)throw new Error("인증키를 입력해주세요.");
+    const d=await api("/api/v3/academy-registration/verify",{method:"POST",body:JSON.stringify({license_key:key})});
+    academyRegistrationToken=d.registration_token;
+    $("registrationAuthBox").classList.add("hidden");
+    $("registrationContent").classList.remove("hidden");
+    $("registrationAuthMsg").textContent="";
+  }catch(e){$("registrationAuthMsg").textContent=e.message}
+}
+async function registerAcademyNow(){
+  try{
+    if(!academyRegistrationToken)throw new Error("먼저 인증키를 확인해주세요.");
+    const region=$("registrationRegion").value;
+    const district=$("registrationDistrict").value;
+    const name=$("registrationAcademyName").value.trim();
+    const password=$("registrationAdminPassword").value;
+    const password2=$("registrationAdminPassword2").value;
+    const recoveryName=$("registrationRecoveryName").value.trim();
+    const recoveryPhone=$("registrationRecoveryPhone").value.trim();
+    if(!region||!district)throw new Error("지역과 시·군·구를 선택해주세요.");
+    if(!name)throw new Error("학원 이름을 입력해주세요.");
+    if(password.length<4)throw new Error("관리자 비밀번호는 4자리 이상 입력해주세요.");
+    if(password!==password2)throw new Error("관리자 비밀번호가 일치하지 않습니다.");
+    if(!recoveryName)throw new Error("최초 관리자 성함을 입력해주세요.");
+    if(!/^\d{4}$/.test(recoveryPhone))throw new Error("관리자 전화번호 끝 4자리를 입력해주세요.");
+    await api("/api/v3/academy-registration/register",{
+      method:"POST",
+      body:JSON.stringify({registration_token:academyRegistrationToken,name,region,district,admin_password:password,recovery_name:recoveryName,recovery_phone_last4:recoveryPhone})
+    });
+    $("registrationMsg").textContent="학원이 등록되었습니다.";
+    $("registrationMsg").className="msg ok";
+    $("academyQ").value=name;
+    setTimeout(async()=>{
+      closeAcademyRegistration();
+      const regions=await api("/api/v3/regions");
+      $("region").innerHTML='<option value="">지역</option>'+regions.map(x=>`<option>${esc(x)}</option>`).join("");
+      await selectSearchedAcademyByName(name,region,district);
+    },500);
+  }catch(e){$("registrationMsg").textContent=e.message;$("registrationMsg").className="msg"}
+}
+async function selectSearchedAcademyByName(name,region,district){
+  const xs=await api("/api/v3/academies/search?q="+encodeURIComponent(name));
+  const a=xs.find(x=>x.name===name&&x.region===region&&x.district===district);
+  if(a)await selectSearchedAcademy(a.id,a.name,a.region,a.district);
+}
 
 let academyManagementToken="";
 let managementAcademies=[];
