@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, or_, and_, func, text
 from sqlalchemy.orm import Session
 from db import Base, engine, get_db, SessionLocal
-from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,Notice,AcademyNotice,AcademyNoticeTemplate
+from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,AdminDevice,Notice,AcademyNotice,AcademyNoticeTemplate
 from security import hash_password,verify_password,token,read_token
 from auth_adapter import verify_license_key,AuthUnavailable
 from push import send_push
@@ -198,6 +198,7 @@ class AcademyCreate(BaseModel): registration_token:str; name:str; region:str; di
 class AdminLoginReq(BaseModel): academy_id:int; password:str
 class ParentLoginReq(BaseModel): academy_id:int|None=None; name:str; phone_last4:str; extra_code:str|None=None; installation_id:str; platform:str="android"; push_token:str|None=None
 class PushTokenReq(BaseModel): push_token:str
+class AdminPushSettingsReq(BaseModel): installation_id:str; platform:str; push_token:str|None=None; attendance_alert_enabled:bool=False
 class ChangePw(BaseModel): current_password:str; new_password:str=Field(min_length=4)
 class RecoveryVerify(BaseModel): academy_id:int; recovery_name:str; recovery_phone_last4:str; license_key:str
 class ResetPw(BaseModel): recovery_token:str; new_password:str=Field(min_length=4)
@@ -1607,6 +1608,35 @@ def admin_login(r:AdminLoginReq,db:Session=Depends(get_db)):
     a=active_academy(db,r.academy_id); c=db.get(AdminCredential,a.id)
     if not c or not verify_password(r.password,c.password_hash): raise HTTPException(401,"관리자 비밀번호가 올바르지 않습니다.")
     return {"academy_id":a.id,"academy_name":a.name,"access_token":token("admin",academy_id=a.id)}
+
+@app.post("/api/v3/admin/device/push-settings")
+def admin_push_settings(r:AdminPushSettingsReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    installation_id=r.installation_id.strip()
+    platform=r.platform.strip().lower()
+    if not installation_id: raise HTTPException(400,"기기 정보가 올바르지 않습니다.")
+    if platform not in {"ios","android"}: raise HTTPException(400,"지원하지 않는 기기입니다.")
+    device=db.scalar(select(AdminDevice).where(
+        AdminDevice.academy_id==auth["academy_id"],
+        AdminDevice.installation_id==installation_id,
+        AdminDevice.platform==platform
+    ))
+    if not device:
+        device=AdminDevice(academy_id=auth["academy_id"],installation_id=installation_id,platform=platform)
+        db.add(device)
+    value=(r.push_token or "").strip()
+    if value: device.push_token=value
+    device.attendance_alert_enabled=r.attendance_alert_enabled
+    device.updated_at=now_kst().astimezone(timezone.utc)
+    db.commit()
+    return {"ok":True,"attendance_alert_enabled":device.attendance_alert_enabled}
+
+def _academy_admin_push_tokens(db:Session,academy_id:int):
+    values=db.scalars(select(AdminDevice.push_token).where(
+        AdminDevice.academy_id==academy_id,
+        AdminDevice.attendance_alert_enabled.is_(True),
+        AdminDevice.push_token.is_not(None)
+    )).all()
+    return list(dict.fromkeys(t for t in values if t))
 @app.post("/api/v3/admin/password")
 def change_pw(r:ChangePw,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     c=db.get(AdminCredential,auth["academy_id"])
@@ -2090,6 +2120,20 @@ def manual_attendance(r:ManualAttendanceReq,auth=Depends(admin_auth),db:Session=
         }
     )
 
+    admin_tokens=[t for t in _academy_admin_push_tokens(db,academy.id) if t not in set(tokens)]
+    send_push(
+        admin_tokens,
+        academy.name,
+        f"{student.name} 학생이 {when} {action}했습니다.",
+        {
+            "student_id":str(student.id),
+            "academy_id":str(academy.id),
+            "event_type":r.event_type,
+            "source":"MANUAL",
+            "recipient":"admin"
+        }
+    )
+
     return {
         "ok":True,
         "message":f"{student.name} 학생 {when} {action} 등록 완료 · 학부모 알림 즉시 전송",
@@ -2180,6 +2224,14 @@ def attendance(r:AttendanceReq,background_tasks:BackgroundTasks,auth=Depends(adm
         a.name,
         f"{s.name} 학생이 {when} {action}했습니다.",
         {"student_id":str(s.id),"academy_id":str(a.id),"event_type":typ}
+    )
+    admin_tokens=[t for t in _academy_admin_push_tokens(db,a.id) if t not in set(tokens)]
+    background_tasks.add_task(
+        send_push,
+        admin_tokens,
+        a.name,
+        f"{s.name} 학생이 {when} {action}했습니다.",
+        {"student_id":str(s.id),"academy_id":str(a.id),"event_type":typ,"source":source,"recipient":"admin"}
     )
     return {"ok":True,"student_id":s.id,"student_name":s.name,"event_type":typ,"source":source,"occurred_at":to_kst(e.occurred_at).isoformat(),"lockout_minutes":10}
 
