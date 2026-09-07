@@ -369,7 +369,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 .pill{display:inline-block;padding:4px 9px;border-radius:999px;background:#eef2ff;color:#395ad7;font-size:12px}
 .small{font-size:13px;color:var(--muted)}.section-title{font-size:18px;font-weight:800;margin:0 0 14px}
 .att-calendar{margin-top:16px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}.att-week,.att-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.att-week div{padding:9px 4px;text-align:center;font-size:12px;font-weight:700;color:var(--muted);background:#fafbff;border-bottom:1px solid var(--line)}.att-day{min-height:72px;padding:7px;border:0;border-right:1px solid #f0f1f5;border-bottom:1px solid #f0f1f5;border-radius:0;background:#fff;color:var(--text);text-align:left}.att-day.empty{background:#fafafa;cursor:default}.att-day.selected{background:#eef2ff;box-shadow:inset 0 0 0 2px var(--blue)}.att-day.today .att-num{color:var(--blue);font-weight:900}.att-num{font-weight:700}.att-count{display:block;margin-top:7px;font-size:11px;color:var(--blue);font-weight:700}.att-selected-title{font-size:15px;font-weight:800;margin:16px 0 8px}
-.schedule-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px}.schedule-head{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:10px}.schedule-head strong{min-width:120px;text-align:center}.schedule-calendar{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}.schedule-week,.schedule-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.schedule-week div{padding:9px 4px;text-align:center;font-size:12px;font-weight:700;color:var(--muted);background:#fafbff;border-bottom:1px solid var(--line)}.schedule-week div:first-child{color:#d32f2f}.schedule-week div:last-child{color:#245bd8}.schedule-day{min-height:96px;padding:7px;border:0;border-right:1px solid #f0f1f5;border-bottom:1px solid #f0f1f5;border-radius:0;background:#fff;color:var(--text);text-align:left;overflow:visible}.schedule-day.empty{background:#fafafa;cursor:default}.schedule-day.today{box-shadow:inset 0 0 0 2px var(--blue)}.schedule-day.sunday .schedule-num,.schedule-day.holiday .schedule-num{color:#d32f2f}.schedule-day.saturday .schedule-num{color:#245bd8}.schedule-num{font-weight:800}.schedule-holiday{display:block;color:#d32f2f;font-size:10px;font-weight:700;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.schedule-item{display:block;margin-top:3px;padding:2px 4px;border-radius:5px;background:#eef2ff;color:#3658ca;font-size:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.schedule-item.closure{background:#fff0f0;color:#c62828}.schedule-range{position:relative;z-index:2;display:block;height:17px;line-height:17px;margin:3px -7px 0;padding-left:4px;background:#eef2ff;color:#3658ca;font-size:10px;font-weight:700;white-space:nowrap;overflow:visible}.schedule-range.closure,.schedule-range.holiday-range{background:#fff0f0;color:#c62828}.schedule-range.start{margin-left:0;border-radius:5px 0 0 5px}.schedule-range.end{margin-right:0;border-radius:0 5px 5px 0}.schedule-range.start.end{border-radius:5px;margin-left:0;margin-right:0}.schedule-detail-row{border-top:1px solid var(--line);padding:12px 0}.schedule-detail-row:first-child{border-top:0}.weekday-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.weekday-grid label{display:flex;align-items:center;gap:7px}.weekday-grid input{width:auto}
+.schedule-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px}.schedule-head{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:10px}.schedule-head strong{min-width:120px;text-align:center}.schedule-calendar{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}.schedule-week,.schedule-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.schedule-week div{padding:9px 4px;text-align:center;font-size:12px;font-weight:700;color:var(--muted);background:#fafbff;border-bottom:1px solid var(--line)}.schedule-week div:first-child{color:#d32f2f}.schedule-week div:last-child{color:#245bd8}.schedule-day{min-height:96px;padding:7px;border:0;border-right:1px solid #f0f1f5;border-bottom:1px solid #f0f1f5;border-radius:0;background:#fff;color:var(--text);text-align:left;overflow:visible}.schedule-day.empty{background:#fafafa;cursor:default}.schedule-day.today{box-shadow:inset 0 0 0 2px var(--blue)}.schedule-day.sunday .schedule-num,.schedule-day.holiday .schedule-num{color:#d32f2f}.schedule-day.saturday .schedule-num{color:#245bd8}.schedule-day.closed .schedule-num{color:#d32f2f}.schedule-num{font-weight:800}.schedule-holiday{display:block;color:#d32f2f;font-size:10px;font-weight:700;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.schedule-item{display:block;margin-top:3px;padding:2px 4px;border-radius:5px;background:#eef2ff;color:#3658ca;font-size:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.schedule-item.closure{background:#fff0f0;color:#c62828}.schedule-range{position:relative;z-index:2;display:block;height:17px;line-height:17px;margin:3px -7px 0;padding-left:4px;background:#eef2ff;color:#3658ca;font-size:10px;font-weight:700;white-space:nowrap;overflow:visible}.schedule-range.closure,.schedule-range.holiday-range{background:#fff0f0;color:#c62828}.schedule-range.start{margin-left:0;border-radius:5px 0 0 5px}.schedule-range.end{margin-right:0;border-radius:0 5px 5px 0}.schedule-range.start.end{border-radius:5px;margin-left:0;margin-right:0}.schedule-detail-row{border-top:1px solid var(--line);padding:12px 0}.schedule-detail-row:first-child{border-top:0}.weekday-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.weekday-grid label{display:flex;align-items:center;gap:7px}.weekday-grid input{width:auto}
 .attendance-live-popup{position:fixed;top:76px;left:50%;transform:translateX(-50%);z-index:120;width:min(620px,calc(100% - 32px));background:#fff;border:2px solid var(--blue);border-radius:26px;box-shadow:0 18px 60px rgba(17,24,39,.28);padding:28px 30px;text-align:center}.attendance-live-name{font-size:34px;font-weight:900;line-height:1.25}.attendance-live-action{font-size:24px;font-weight:800;color:var(--blue);margin-top:8px}.attendance-live-time{font-size:14px;color:var(--muted);margin-top:8px}.attendance-live-close{margin-top:18px;min-width:120px}
 @media(max-width:720px){.grid,.grid3{grid-template-columns:1fr}.between{align-items:flex-start;flex-direction:column}.tablewrap{overflow:auto}.att-day{min-height:60px;padding:5px}.att-count{font-size:10px}.schedule-day{min-height:76px;padding:5px}.schedule-range{margin-left:-5px;margin-right:-5px}.weekday-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
@@ -462,7 +462,7 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
         <div class="section-title">학원 일정</div>
         <div class="schedule-actions">
           <button class="primary" onclick="openScheduleEditor('schedule')">일정 등록</button>
-          <button class="secondary" onclick="openClosureChoice()">휴무 등록</button>
+          <button class="secondary" onclick="openClosureChoice()">휴원 등록</button>
         </div>
         <div class="schedule-head">
           <button class="secondary" aria-label="이전 달" onclick="moveScheduleMonth(-1)">‹</button>
@@ -747,9 +747,9 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 
   <div id="closureChoiceBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:83;padding:24px;display:flex;align-items:center;justify-content:center">
     <div class="card" style="width:min(460px,100%);margin:0">
-      <div class="between"><div class="section-title" style="margin:0">휴무 등록</div><button class="secondary" onclick="closeClosureChoice()">닫기</button></div>
+      <div class="between"><div class="section-title" style="margin:0">휴원 등록</div><button class="secondary" onclick="closeClosureChoice()">닫기</button></div>
       <div style="height:14px"></div>
-      <button class="primary" style="width:100%" onclick="openDirectClosure()">직접 휴무</button>
+      <button class="primary" style="width:100%" onclick="openDirectClosure()">직접 휴원</button>
       <div style="height:9px"></div>
       <button class="secondary" style="width:100%" onclick="openClosureSettings('monthly')">이번 달만 설정</button>
       <div style="height:9px"></div>
@@ -759,16 +759,16 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 
   <div id="closureSettingsBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:85;padding:24px;display:flex;align-items:center;justify-content:center">
     <div class="card" style="width:min(540px,100%);margin:0">
-      <div class="between"><div id="closureSettingsTitle" class="section-title" style="margin:0">휴무 설정</div><button class="secondary" onclick="closeClosureSettings()">닫기</button></div>
+      <div class="between"><div id="closureSettingsTitle" class="section-title" style="margin:0">휴원 설정</div><button class="secondary" onclick="closeClosureSettings()">닫기</button></div>
       <input id="closureSettingsScope" type="hidden">
-      <div class="small" style="margin:16px 0 9px">휴무 요일</div>
+      <div class="small" style="margin:16px 0 9px">휴원 요일</div>
       <div class="weekday-grid">
         <label><input id="scheduleWeekday0" type="checkbox">일요일</label><label><input id="scheduleWeekday1" type="checkbox">월요일</label>
         <label><input id="scheduleWeekday2" type="checkbox">화요일</label><label><input id="scheduleWeekday3" type="checkbox">수요일</label>
         <label><input id="scheduleWeekday4" type="checkbox">목요일</label><label><input id="scheduleWeekday5" type="checkbox">금요일</label>
         <label><input id="scheduleWeekday6" type="checkbox">토요일</label>
       </div>
-      <label class="row" style="margin-top:16px"><input id="scheduleHolidayAuto" type="checkbox" style="width:auto"><span>공휴일 자동 휴무</span></label>
+      <label class="row" style="margin-top:16px"><input id="scheduleHolidayAuto" type="checkbox" style="width:auto"><span>공휴일 자동 휴원</span></label>
       <div style="height:16px"></div>
       <button class="primary" style="width:100%" onclick="saveClosureSettings()">저장</button>
       <div id="closureSettingsMsg" class="msg"></div>
@@ -1439,7 +1439,8 @@ function renderAcademySchedule(){
   for(let day=1;day<=days;day++){
     const key=`${y}-${String(m).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
     const weekday=new Date(y,m-1,day).getDay(),holiday=holidaysByDate[key];
-    const classes=["schedule-day"];if(weekday===0)classes.push("sunday");if(weekday===6)classes.push("saturday");if(holiday)classes.push("holiday");if(key===academyScheduleData.today)classes.push("today");
+    const closed=!!autoByDate[key]||(academyScheduleData.events||[]).some(item=>item.kind==="closure"&&item.start_date<=key&&item.end_date>=key);
+    const classes=["schedule-day"];if(weekday===0)classes.push("sunday");if(weekday===6)classes.push("saturday");if(holiday)classes.push("holiday");if(closed)classes.push("closed");if(key===academyScheduleData.today)classes.push("today");
     let content=`<span class="schedule-num">${day}</span>`;
     if(holiday&&!holiday.group_id)content+=`<span class="schedule-holiday">${esc(holiday.name)}</span>`;
     if(holiday&&holiday.group_id){
@@ -1449,14 +1450,14 @@ function renderAcademySchedule(){
     }
     for(const item of (academyScheduleData.events||[])){
       if(key<item.start_date||key>item.end_date)continue;
-      const label=item.kind==="closure"?(item.title||"휴무"):item.title;
-      if(item.start_date===item.end_date)content+=`<span class="schedule-item ${item.kind}">${esc(label)}</span>`;
+      const label=item.kind==="closure"?"휴원":item.title;
+      if(item.kind==="closure"||item.start_date===item.end_date)content+=`<span class="schedule-item ${item.kind}">${esc(label)}</span>`;
       else{
         const clippedStart=item.start_date<monthFirst?monthFirst:item.start_date,clippedEnd=item.end_date>monthLast?monthLast:item.end_date;
         content+=scheduleRangeSegment(label,item.kind,key===clippedStart||weekday===0,key===clippedEnd||weekday===6);
       }
     }
-    if(autoByDate[key])content+=`<span class="schedule-item closure">${esc(autoByDate[key].title||"휴무")}</span>`;
+    if(autoByDate[key])content+='<span class="schedule-item closure">휴원</span>';
     cells+=`<button class="${classes.join(" ")}" onclick="openScheduleDay('${key}')">${content}</button>`;
   }
   const used=startDay+days,tail=(7-used%7)%7;for(let i=0;i<tail;i++)cells+='<button class="schedule-day empty" disabled></button>';
@@ -1468,7 +1469,7 @@ function openScheduleDay(key){
   const rows=[],holiday=(academyScheduleData.holidays||[]).find(item=>item.date===key);
   if(holiday)rows.push(`<div class="schedule-detail-row"><b>${esc(holiday.group_name||holiday.name)}</b><div class="small">대한민국 공휴일</div></div>`);
   for(const item of (academyScheduleData.events||[]).filter(item=>item.start_date<=key&&item.end_date>=key)){
-    const title=item.kind==="closure"?(item.title||"휴무"):item.title;
+    const title=item.kind==="closure"?(item.title||"휴원"):item.title;
     const range=item.start_date===item.end_date?"":`<div class="small">${esc(item.start_date)} ~ ${esc(item.end_date)}</div>`;
     const detail=item.content?`<div style="white-space:pre-wrap;margin-top:6px">${esc(item.content)}</div>`:"";
     const actions=item.editable?`<div class="row" style="margin-top:9px"><button class="secondary" onclick="editAcademySchedule(${item.id})">수정</button><button class="danger" onclick="deleteAcademySchedule(${item.id})">삭제</button></div>`:`<div class="small" style="margin-top:7px">지난 일정입니다. 조회만 가능합니다.</div>`;
@@ -1476,17 +1477,17 @@ function openScheduleDay(key){
   }
   const automatic=(academyScheduleData.automatic_closures||[]).find(item=>item.date===key);
   if(automatic){
-    const release=scheduleDateAllowed(key)?`<button class="secondary" style="margin-top:9px" onclick="setScheduleException('${key}',false)">이 날짜만 휴무 해제</button>`:`<div class="small" style="margin-top:7px">지난 휴무는 변경할 수 없습니다.</div>`;
-    rows.push(`<div class="schedule-detail-row"><b>${esc(automatic.title||"휴무")}</b><div class="small">자동 휴무</div>${release}</div>`);
+    const release=scheduleDateAllowed(key)?`<button class="secondary" style="margin-top:9px" onclick="setScheduleException('${key}',false)">이 날짜만 휴원 해제</button>`:`<div class="small" style="margin-top:7px">지난 휴원은 변경할 수 없습니다.</div>`;
+    rows.push(`<div class="schedule-detail-row"><b>${esc(automatic.title||"휴원")}</b><div class="small">자동 휴원</div>${release}</div>`);
   }
   const exception=(academyScheduleData.exceptions||[]).find(item=>item.date===key);
   if(exception&&exception.is_closed===false){
-    const reset=scheduleDateAllowed(key)?`<button class="secondary" style="margin-top:9px" onclick="resetScheduleException('${key}')">휴무 해제 예외 취소</button>`:"";
-    rows.push(`<div class="schedule-detail-row"><b>자동 휴무 해제</b><div class="small">이 날짜만 휴무에서 제외되어 있습니다.</div>${reset}</div>`);
+    const reset=scheduleDateAllowed(key)?`<button class="secondary" style="margin-top:9px" onclick="resetScheduleException('${key}')">휴원 해제 예외 취소</button>`:"";
+    rows.push(`<div class="schedule-detail-row"><b>자동 휴원 해제</b><div class="small">이 날짜만 휴원에서 제외되어 있습니다.</div>${reset}</div>`);
   }
   $("scheduleDayContents").innerHTML=rows.length?rows.join(""):'<div class="small">등록된 일정이 없습니다.</div>';
   if(scheduleDateAllowed(key)){
-    $("scheduleDayActions").innerHTML=`<button class="primary" onclick="openScheduleEditor('schedule',null,'${key}')">일정 등록</button><button class="secondary" onclick="openScheduleEditor('closure',null,'${key}')">휴무 등록</button>`;
+    $("scheduleDayActions").innerHTML=`<button class="primary" onclick="openScheduleEditor('schedule',null,'${key}')">일정 등록</button><button class="secondary" onclick="openScheduleEditor('closure',null,'${key}')">휴원 등록</button>`;
   }else{
     $("scheduleDayActions").innerHTML="";
     if(key<academyScheduleData.today)$("scheduleDayMsg").textContent="지난 날짜에는 새 일정을 등록할 수 없습니다.";
@@ -1502,13 +1503,13 @@ function openScheduleEditor(kind,eventId=null,forcedDate=null){
   if(!item&&!target){$("academyScheduleMsg").textContent="이 달에는 새 일정을 등록할 수 없습니다.";$("academyScheduleMsg").className="msg";return;}
   closeScheduleDay();closeClosureChoice();
   $("scheduleEditId").value=item?String(item.id):"";$("scheduleEditKind").value=kind;
-  $("scheduleEditorTitle").textContent=`${kind==="closure"?"휴무":"일정"} ${item?"수정":"등록"}`;
+  $("scheduleEditorTitle").textContent=`${kind==="closure"?"휴원":"일정"} ${item?"수정":"등록"}`;
   $("scheduleRangeMode").value=item&&item.start_date!==item.end_date?"range":"single";
   $("scheduleStartDate").value=target;$("scheduleEndDate").value=item?item.end_date:target;
   $("scheduleStartDate").min=academyScheduleData.today;$("scheduleStartDate").max=academyScheduleData.create_max_date;
   $("scheduleEndDate").min=target;$("scheduleEndDate").max=academyScheduleData.create_max_date;
-  $("scheduleTitleLabel").textContent=kind==="closure"?"휴무 사유 (선택)":"일정명";
-  $("scheduleTitleInput").placeholder=kind==="closure"?"비워두면 ‘휴무’로 표시됩니다.":"일정명을 입력해주세요.";
+  $("scheduleTitleLabel").textContent=kind==="closure"?"휴원 사유 (선택)":"일정명";
+  $("scheduleTitleInput").placeholder=kind==="closure"?"비워두면 ‘휴원’으로 표시됩니다.":"일정명을 입력해주세요.";
   $("scheduleTitleInput").value=item?item.title:"";$("scheduleContentInput").value=item?item.content:"";
   $("scheduleContentWrap").classList.toggle("hidden",kind==="closure");
   $("scheduleEditorMsg").textContent="";scheduleRangeModeChanged();
@@ -1540,11 +1541,11 @@ function openClosureSettings(scope){
   if(scope==="monthly"){
     const key=`${scheduleYear}-${String(scheduleMonth).padStart(2,"0")}`;
     if(key<academyScheduleData.today.slice(0,7)||key>academyScheduleData.create_max_date.slice(0,7)){
-      $("academyScheduleMsg").textContent="이 달의 휴무 설정은 변경할 수 없습니다.";$("academyScheduleMsg").className="msg";closeClosureChoice();return;
+      $("academyScheduleMsg").textContent="이 달의 휴원 설정은 변경할 수 없습니다.";$("academyScheduleMsg").className="msg";closeClosureChoice();return;
     }
   }
   closeClosureChoice();$("closureSettingsScope").value=scope;
-  $("closureSettingsTitle").textContent=scope==="monthly"?`${scheduleYear}년 ${scheduleMonth}월 휴무 설정`:"매월 휴무 설정";
+  $("closureSettingsTitle").textContent=scope==="monthly"?`${scheduleYear}년 ${scheduleMonth}월 휴원 설정`:"매월 휴원 설정";
   const value=scope==="monthly"?academyScheduleData.settings.monthly:academyScheduleData.settings.recurring;
   for(let i=0;i<7;i++)$("scheduleWeekday"+i).checked=(value.weekdays||[]).includes(i);
   $("scheduleHolidayAuto").checked=!!value.holiday_auto;$("closureSettingsMsg").textContent="";
@@ -2009,7 +2010,7 @@ def schedule_weekdays(value:str):
 
 def schedule_weekdays_text(values:list[int]):
     if any(type(value) is not int or value<0 or value>6 for value in values):
-        raise HTTPException(400,"휴무 요일이 올바르지 않습니다.")
+        raise HTTPException(400,"휴원 요일이 올바르지 않습니다.")
     return ",".join(str(value) for value in sorted(set(values)))
 
 def schedule_setting_row(db:Session,academy_id:int,scope:str,year_month:str=""):
@@ -2143,11 +2144,11 @@ def academy_schedule_payload(db:Session,academy_id:int,year:int,month:int):
         weekday_closed=weekday in active["weekdays"]
         holiday_closed=bool(active["holiday_auto"] and holiday)
         if override is True:
-            automatic.append({"date":key,"title":"휴무","source":"exception"})
+            automatic.append({"date":key,"title":"휴원","source":"exception"})
         elif holiday_closed:
-            automatic.append({"date":key,"title":"휴무","source":"public_holiday"})
+            automatic.append({"date":key,"title":"휴원","source":"public_holiday"})
         elif weekday_closed:
-            automatic.append({"date":key,"title":"정기 휴무","source":weekday_source})
+            automatic.append({"date":key,"title":"정기 휴원","source":weekday_source})
         cursor+=timedelta(days=1)
     return {
         "academy_id":academy_id,
@@ -2220,7 +2221,7 @@ def update_admin_academy_schedule_settings(r:AcademyScheduleSettingsWrite,auth=D
     active_academy(db,auth["academy_id"])
     scope=r.scope.strip().lower()
     if scope not in {"recurring","monthly"}:
-        raise HTTPException(400,"휴무 설정 종류가 올바르지 않습니다.")
+        raise HTTPException(400,"휴원 설정 종류가 올바르지 않습니다.")
     weekdays=schedule_weekdays_text(r.weekdays)
     year_month=""
     if scope=="monthly":
@@ -2243,7 +2244,7 @@ def update_admin_academy_schedule_settings(r:AcademyScheduleSettingsWrite,auth=D
 def validate_schedule_exception_date(value:date):
     today=now_kst().date()
     if value<today:
-        raise HTTPException(403,"지난 날짜의 휴무 예외는 변경할 수 없습니다.")
+        raise HTTPException(403,"지난 날짜의 휴원 예외는 변경할 수 없습니다.")
     if value>schedule_create_max_date(today):
         raise HTTPException(400,"설정 가능한 날짜 범위를 벗어났습니다.")
 
