@@ -32,10 +32,23 @@ class Notice(Base):
 
 class AcademyNotice(Base):
     __tablename__="academy_notices"; __table_args__=(UniqueConstraint("academy_id","notice_type",name="uq_academy_notice_type"),Index("ix_academy_notice_active","academy_id","is_active"))
-    id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True); academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True); notice_type:Mapped[str]=mapped_column(String(20),nullable=False); content:Mapped[str]=mapped_column(Text,default="",nullable=False); is_active:Mapped[bool]=mapped_column(Boolean,default=False,nullable=False); updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+    id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True); academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True); notice_type:Mapped[str]=mapped_column(String(20),nullable=False); content:Mapped[str]=mapped_column(Text,default="",nullable=False); is_active:Mapped[bool]=mapped_column(Boolean,default=False,nullable=False); start_date:Mapped[date|None]=mapped_column(Date,nullable=True); end_date:Mapped[date|None]=mapped_column(Date,nullable=True); updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
 class AcademyNoticeTemplate(Base):
     __tablename__="academy_notice_templates"; __table_args__=(UniqueConstraint("academy_id","slot",name="uq_academy_notice_template_slot"),)
     id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True); academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True); slot:Mapped[int]=mapped_column(Integer,nullable=False); content:Mapped[str]=mapped_column(Text,default="",nullable=False); updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+
+class AcademyAdminNotice(Base):
+    __tablename__="academy_admin_notices"
+    __table_args__=(
+        UniqueConstraint("academy_id","notice_type",name="uq_academy_admin_notice_type"),
+        Index("ix_academy_admin_notice_active","academy_id","is_active"),
+    )
+    id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True)
+    academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True)
+    notice_type:Mapped[str]=mapped_column(String(20),nullable=False)
+    content:Mapped[str]=mapped_column(Text,default="",nullable=False)
+    is_active:Mapped[bool]=mapped_column(Boolean,default=False,nullable=False)
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
 
 class AcademySchedule(Base):
     __tablename__="academy_schedules"
@@ -76,3 +89,18 @@ class AcademyScheduleException(Base):
     date:Mapped[date]=mapped_column(Date,nullable=False)
     is_closed:Mapped[bool]=mapped_column(Boolean,nullable=False)
     updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+
+class AcademyScheduleRuleHistory(Base):
+    __tablename__="academy_schedule_rule_history"
+    __table_args__=(
+        UniqueConstraint("academy_id","scope","year_month","effective_from",name="uq_academy_schedule_rule_history"),
+        Index("ix_academy_schedule_rule_history_lookup","academy_id","scope","year_month","effective_from"),
+    )
+    id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True)
+    academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True)
+    scope:Mapped[str]=mapped_column(String(20),nullable=False)
+    year_month:Mapped[str]=mapped_column(String(7),default="",nullable=False)
+    effective_from:Mapped[date]=mapped_column(Date,nullable=False)
+    weekdays:Mapped[str]=mapped_column(String(20),default="",nullable=False)
+    holiday_auto:Mapped[bool]=mapped_column(Boolean,default=False,nullable=False)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, or_, and_, func, text
 from sqlalchemy.orm import Session
 from db import Base, engine, get_db, SessionLocal
-from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,AdminDevice,Notice,AcademyNotice,AcademyNoticeTemplate,AcademySchedule,AcademyScheduleSetting,AcademyScheduleException
+from models import Academy,AdminCredential,Student,StudentAcademy,AttendanceEvent,ParentDevice,ParentLink,AdminDevice,Notice,AcademyNotice,AcademyNoticeTemplate,AcademyAdminNotice,AcademySchedule,AcademyScheduleSetting,AcademyScheduleException,AcademyScheduleRuleHistory
 from security import hash_password,verify_password,token,read_token
 from auth_adapter import verify_license_key,AuthUnavailable
 from push import send_push
@@ -62,6 +62,8 @@ def startup():
         conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS open_time VARCHAR(5) NOT NULL DEFAULT '09:00'"))
         conn.execute(text("ALTER TABLE academies ADD COLUMN IF NOT EXISTS close_time VARCHAR(5) NOT NULL DEFAULT '20:00'"))
         conn.execute(text("ALTER TABLE student_academies ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMPTZ NULL"))
+        conn.execute(text("ALTER TABLE academy_notices ADD COLUMN IF NOT EXISTS start_date DATE NULL"))
+        conn.execute(text("ALTER TABLE academy_notices ADD COLUMN IF NOT EXISTS end_date DATE NULL"))
     with next(get_db()) as db:
         for t in ("regular","emergency"):
             if db.get(Notice,t) is None: db.add(Notice(notice_type=t))
@@ -229,7 +231,8 @@ class AcademyScheduleSettingsWrite(BaseModel):
     holiday_auto:bool=False
 class AcademyScheduleExceptionWrite(BaseModel): is_closed:bool
 class NoticeWrite(BaseModel): management_token:str; notice_type:str; content:str; is_active:bool
-class AcademyParentNoticeSaveReq(BaseModel): notice_type:str; content:str; is_active:bool
+class AcademyAdminNoticeWrite(BaseModel): management_token:str; academy_id:int; notice_type:str; content:str; is_active:bool
+class AcademyParentNoticeSaveReq(BaseModel): notice_type:str; content:str; is_active:bool; start_date:date|None=None; end_date:date|None=None
 class AcademyNoticeTemplateSaveReq(BaseModel): slot:int; content:str
 
 # 코드노트 공지 앱(기존 MusyncNotice) 호환용 요청 모델
@@ -520,6 +523,12 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
         </div>
         <div style="height:14px"></div>
         <label class="row" style="margin-bottom:10px"><input id="parentNoticeActive" type="checkbox" style="width:auto"><span>공지 활성화</span></label>
+        <label class="row" style="margin-bottom:10px"><input id="parentNoticePeriodEnabled" type="checkbox" style="width:auto" onchange="parentNoticePeriodChanged()"><span>기간 설정</span></label>
+        <div id="parentNoticePeriodFields" class="grid hidden" style="margin-bottom:10px">
+          <div><div class="small" style="margin-bottom:6px">시작일</div><input id="parentNoticeStartDate" type="date"></div>
+          <div><div class="small" style="margin-bottom:6px">종료일</div><input id="parentNoticeEndDate" type="date"></div>
+        </div>
+        <div id="parentNoticePeriodHelp" class="small hidden" style="margin:-2px 0 10px">시작일과 종료일을 모두 포함해 학부모 앱에 표시됩니다.</div>
         <textarea id="parentNoticeContent" style="min-height:240px" placeholder="공지 내용을 입력해주세요."></textarea>
         <div class="small" style="margin-top:8px">일반공지는 학부모가 ‘오늘 하루 보지 않기’ 또는 ‘닫기’를 선택할 수 있고, 긴급공지는 ‘닫기’만 표시되며 앱에 들어올 때마다 다시 나타납니다.</div>
         <div class="row" style="margin-top:14px;flex-wrap:wrap">
@@ -618,6 +627,42 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
       <div id="editManagedAcademyMsg" class="msg"></div>
       <div style="height:12px"></div>
       <button class="primary" style="width:100%" onclick="saveManagedAcademyEdit()">수정 완료</button>
+    </div>
+  </div>
+
+  <div id="managedAcademyNoticeBox" class="hidden" style="position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:76;padding:24px;display:flex;align-items:center;justify-content:center">
+    <div class="card" style="width:min(560px,100%);max-height:90vh;overflow:auto;margin:0">
+      <div class="between">
+        <div>
+          <div class="section-title" style="margin:0">학원 관리자 공지</div>
+          <div id="managedAcademyNoticeAcademyName" class="small"></div>
+        </div>
+        <button class="secondary" onclick="closeManagedAcademyNotice()">닫기</button>
+      </div>
+      <input id="managedAcademyNoticeAcademyId" type="hidden">
+      <div style="height:14px"></div>
+      <div class="grid">
+        <div>
+          <div class="small" style="margin-bottom:6px">공지 종류</div>
+          <select id="managedAcademyNoticeType" onchange="selectManagedAcademyNoticeType()">
+            <option value="regular">일반 공지</option>
+            <option value="emergency">긴급 공지</option>
+          </select>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;padding-top:24px">
+          <input id="managedAcademyNoticeActive" type="checkbox" style="width:auto">
+          관리자 앱에 표시
+        </label>
+      </div>
+      <div style="height:10px"></div>
+      <div class="small" style="margin-bottom:6px">공지 내용</div>
+      <textarea id="managedAcademyNoticeContent" style="min-height:150px" placeholder="선택한 학원 관리자에게 보여줄 공지를 입력해주세요."></textarea>
+      <div id="managedAcademyNoticeMsg" class="msg"></div>
+      <div style="height:12px"></div>
+      <div class="row" style="justify-content:flex-end;flex-wrap:wrap">
+        <button class="danger" onclick="deleteManagedAcademyNotice()">선택 공지 삭제</button>
+        <button class="primary" onclick="saveManagedAcademyNotice()">공지 저장</button>
+      </div>
     </div>
   </div>
 
@@ -1106,6 +1151,7 @@ async function selectSearchedAcademyByName(name,region,district){
 
 let academyManagementToken="";
 let managementAcademies=[];
+let managedAcademyNoticeState={regular:{content:"",is_active:false},emergency:{content:"",is_active:false}};
 
 // 학원 등록 여부와 무관한 대한민국 전국 행정구역 고정 목록
 const ALL_KOREA_REGIONS=["서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시", "대전광역시", "울산광역시", "세종특별자치시", "경기도", "강원특별자치도", "충청북도", "충청남도", "전북특별자치도", "전라남도", "경상북도", "경상남도", "제주특별자치도"];
@@ -1158,6 +1204,7 @@ function renderManagementAcademies(){
         <div class="row">
           <button class="secondary" onclick="openManagedAcademyEdit(${a.id})">수정</button>
           <button class="secondary" onclick="toggleManagedAcademy(${a.id},${a.is_active?'false':'true'})">${a.is_active?'비활성화':'활성화'}</button>
+          <button class="secondary" onclick="openManagedAcademyNotice(${a.id})">공지</button>
           <button class="danger" onclick="deleteManagedAcademy(${a.id},'${esc(a.name).replace(/'/g,"&#39;")}')">삭제</button>
         </div>
       </td>
@@ -1202,6 +1249,92 @@ async function loadEditManagedDistricts(selectedDistrict=""){
 function closeManagedAcademyEdit(){
   $("editManagedAcademyBox").classList.add("hidden");
   $("editManagedAcademyMsg").textContent="";
+}
+async function openManagedAcademyNotice(id){
+  const academy=managementAcademies.find(x=>x.id===id);
+  if(!academy)return;
+  $("managedAcademyNoticeAcademyId").value=String(id);
+  $("managedAcademyNoticeAcademyName").textContent=academy.name+" 관리자에게 표시됩니다.";
+  $("managedAcademyNoticeMsg").textContent="불러오는 중...";
+  $("managedAcademyNoticeMsg").className="msg";
+  $("managedAcademyNoticeBox").classList.remove("hidden");
+  try{
+    const d=await api(
+      "/api/v3/academy-management/admin-notices?management_token="+
+      encodeURIComponent(academyManagementToken)+"&academy_id="+encodeURIComponent(id)
+    );
+    managedAcademyNoticeState={
+      regular:d.regular||{content:"",is_active:false},
+      emergency:d.emergency||{content:"",is_active:false}
+    };
+    $("managedAcademyNoticeType").value="regular";
+    selectManagedAcademyNoticeType();
+  }catch(e){
+    $("managedAcademyNoticeMsg").textContent=e.message;
+  }
+}
+function closeManagedAcademyNotice(){
+  $("managedAcademyNoticeBox").classList.add("hidden");
+  $("managedAcademyNoticeMsg").textContent="";
+}
+function selectManagedAcademyNoticeType(){
+  const kind=$("managedAcademyNoticeType").value;
+  const row=managedAcademyNoticeState[kind]||{};
+  $("managedAcademyNoticeContent").value=row.content||"";
+  $("managedAcademyNoticeActive").checked=!!row.is_active;
+  $("managedAcademyNoticeMsg").textContent="";
+  $("managedAcademyNoticeMsg").className="msg";
+}
+async function saveManagedAcademyNotice(){
+  const academyId=Number($("managedAcademyNoticeAcademyId").value);
+  const kind=$("managedAcademyNoticeType").value;
+  const content=$("managedAcademyNoticeContent").value.trim();
+  const isActive=$("managedAcademyNoticeActive").checked;
+  if(isActive&&!content){
+    $("managedAcademyNoticeMsg").textContent="표시할 공지 내용을 입력해주세요.";
+    $("managedAcademyNoticeMsg").className="msg";
+    return;
+  }
+  try{
+    const saved=await api("/api/v3/academy-management/admin-notices",{
+      method:"POST",
+      body:JSON.stringify({
+        management_token:academyManagementToken,
+        academy_id:academyId,
+        notice_type:kind,
+        content:content,
+        is_active:isActive
+      })
+    });
+    managedAcademyNoticeState[kind]=saved;
+    $("managedAcademyNoticeContent").value=saved.content||"";
+    $("managedAcademyNoticeActive").checked=!!saved.is_active;
+    $("managedAcademyNoticeMsg").textContent="공지 저장 완료";
+    $("managedAcademyNoticeMsg").className="msg ok";
+  }catch(e){
+    $("managedAcademyNoticeMsg").textContent=e.message;
+    $("managedAcademyNoticeMsg").className="msg";
+  }
+}
+async function deleteManagedAcademyNotice(){
+  const academyId=Number($("managedAcademyNoticeAcademyId").value);
+  const kind=$("managedAcademyNoticeType").value;
+  if(!confirm("선택한 공지를 삭제하시겠습니까?"))return;
+  try{
+    await api(
+      "/api/v3/academy-management/admin-notices/"+encodeURIComponent(kind)+
+      "?management_token="+encodeURIComponent(academyManagementToken)+
+      "&academy_id="+encodeURIComponent(academyId),
+      {method:"DELETE"}
+    );
+    managedAcademyNoticeState[kind]={type:kind,content:"",is_active:false,updated_at:null};
+    selectManagedAcademyNoticeType();
+    $("managedAcademyNoticeMsg").textContent="공지가 삭제되었습니다.";
+    $("managedAcademyNoticeMsg").className="msg ok";
+  }catch(e){
+    $("managedAcademyNoticeMsg").textContent=e.message;
+    $("managedAcademyNoticeMsg").className="msg";
+  }
 }
 async function saveManagedAcademyEdit(){
   const id=Number($("editManagedAcademyId").value);
@@ -1256,7 +1389,7 @@ async function toggleManagedAcademy(id,activeValue){
   }catch(e){$("managementMsg").textContent=e.message;$("managementMsg").className="msg"}
 }
 async function deleteManagedAcademy(id,name){
-  if(!confirm(name+" 학원을 완전히 삭제하시겠습니까?"))return;
+  if(!confirm(name+" 학원을 완전히 삭제하시겠습니까?\n학생 연결, 출석기록, 학원 일정과 공지 데이터도 함께 삭제되며 복구할 수 없습니다."))return;
   try{
     await api("/api/v3/academy-management/delete",{
       method:"POST",
@@ -1314,7 +1447,22 @@ function selectParentNoticeType(){
   const row=parentNoticeAdminState[kind]||{};
   $("parentNoticeContent").value=row.content||"";
   $("parentNoticeActive").checked=!!row.is_active;
+  const hasPeriod=!!row.start_date&&!!row.end_date;
+  $("parentNoticePeriodEnabled").checked=hasPeriod;
+  $("parentNoticeStartDate").value=row.start_date||"";
+  $("parentNoticeEndDate").value=row.end_date||"";
+  parentNoticePeriodChanged(false);
   $("parentNoticeMsg").textContent="";
+}
+function parentNoticePeriodChanged(fillDefaults=true){
+  const enabled=$("parentNoticePeriodEnabled").checked;
+  $("parentNoticePeriodFields").classList.toggle("hidden",!enabled);
+  $("parentNoticePeriodHelp").classList.toggle("hidden",!enabled);
+  if(enabled&&fillDefaults){
+    const today=todayKst();
+    if(!$("parentNoticeStartDate").value)$("parentNoticeStartDate").value=today;
+    if(!$("parentNoticeEndDate").value)$("parentNoticeEndDate").value=$("parentNoticeStartDate").value;
+  }
 }
 async function loadParentNoticeAdmin(){
   if(!token)return;
@@ -1329,7 +1477,11 @@ async function saveParentNotice(){
   if(!token)return;
   const kind=$("parentNoticeType").value;
   try{
-    const d=await api("/api/v3/admin/parent-notices",{method:"POST",body:JSON.stringify({notice_type:kind,content:$("parentNoticeContent").value,is_active:$("parentNoticeActive").checked})});
+    const period=$("parentNoticePeriodEnabled").checked;
+    const start=period?$("parentNoticeStartDate").value:null,end=period?$("parentNoticeEndDate").value:null;
+    if(period&&(!start||!end))throw new Error("공지 시작일과 종료일을 모두 입력해주세요.");
+    if(period&&start>end)throw new Error("공지 종료일은 시작일보다 빠를 수 없습니다.");
+    const d=await api("/api/v3/admin/parent-notices",{method:"POST",body:JSON.stringify({notice_type:kind,content:$("parentNoticeContent").value,is_active:$("parentNoticeActive").checked,start_date:start,end_date:end})});
     parentNoticeAdminState[kind]=d;
     $("parentNoticeMsg").textContent=d.notification_scheduled?`저장되었습니다. 공지 알림을 ${d.recipient_devices||0}대 기기에 전송 요청했습니다.`:"저장되었습니다.";
     $("parentNoticeMsg").className="msg ok";
@@ -2020,6 +2172,88 @@ def schedule_setting_row(db:Session,academy_id:int,scope:str,year_month:str=""):
         AcademyScheduleSetting.year_month==year_month
     ))
 
+def schedule_rule_value(row):
+    if row is None:
+        return {"weekdays":[],"holiday_auto":False}
+    return {
+        "weekdays":schedule_weekdays(row.weekdays),
+        "holiday_auto":bool(row.holiday_auto),
+    }
+
+def schedule_rule_history_rows(db:Session,academy_id:int,scope:str,year_month:str):
+    return list(db.scalars(select(AcademyScheduleRuleHistory).where(
+        AcademyScheduleRuleHistory.academy_id==academy_id,
+        AcademyScheduleRuleHistory.scope==scope,
+        AcademyScheduleRuleHistory.year_month==year_month
+    ).order_by(AcademyScheduleRuleHistory.effective_from)).all())
+
+def schedule_latest_rule(rows:list[AcademyScheduleRuleHistory],value:date):
+    selected=None
+    for row in rows:
+        if row.effective_from>value:
+            break
+        selected=row
+    return selected
+
+def schedule_effective_rule(
+    value:date,
+    recurring:AcademyScheduleSetting|None,
+    monthly:AcademyScheduleSetting|None,
+    recurring_history:list[AcademyScheduleRuleHistory],
+    monthly_history:list[AcademyScheduleRuleHistory],
+):
+    monthly_version=schedule_latest_rule(monthly_history,value)
+    if monthly_version is not None:
+        return schedule_rule_value(monthly_version),"monthly_weekday"
+    # 히스토리가 하나라도 있으면 첫 적용일 전 날짜에는 월별 규칙이 없었던 것입니다.
+    if not monthly_history and monthly is not None:
+        return schedule_rule_value(monthly),"monthly_weekday"
+    recurring_version=schedule_latest_rule(recurring_history,value)
+    if recurring_version is not None:
+        return schedule_rule_value(recurring_version),"recurring_weekday"
+    # 기존 배포 데이터는 첫 변경 직전에 히스토리 기준행을 만들므로 그 전까지 현재값을 유지합니다.
+    if not recurring_history and recurring is not None:
+        return schedule_rule_value(recurring),"recurring_weekday"
+    return schedule_rule_value(None),"recurring_weekday"
+
+def ensure_schedule_rule_history_baseline(
+    db:Session,academy_id:int,scope:str,year_month:str,row:AcademyScheduleSetting
+):
+    exists=db.scalar(select(AcademyScheduleRuleHistory.id).where(
+        AcademyScheduleRuleHistory.academy_id==academy_id,
+        AcademyScheduleRuleHistory.scope==scope,
+        AcademyScheduleRuleHistory.year_month==year_month
+    ))
+    if exists:
+        return
+    if scope=="monthly":
+        year,month=[int(part) for part in year_month.split("-",1)]
+        effective_from=date(year,month,1)
+    else:
+        effective_from=date(1900,1,1)
+    db.add(AcademyScheduleRuleHistory(
+        academy_id=academy_id,scope=scope,year_month=year_month,effective_from=effective_from,
+        weekdays=row.weekdays,holiday_auto=bool(row.holiday_auto)
+    ))
+    db.flush()
+
+def upsert_schedule_rule_history(
+    db:Session,academy_id:int,scope:str,year_month:str,effective_from:date,weekdays:str,holiday_auto:bool
+):
+    row=db.scalar(select(AcademyScheduleRuleHistory).where(
+        AcademyScheduleRuleHistory.academy_id==academy_id,
+        AcademyScheduleRuleHistory.scope==scope,
+        AcademyScheduleRuleHistory.year_month==year_month,
+        AcademyScheduleRuleHistory.effective_from==effective_from
+    ))
+    if row is None:
+        row=AcademyScheduleRuleHistory(
+            academy_id=academy_id,scope=scope,year_month=year_month,effective_from=effective_from
+        )
+    row.weekdays=weekdays
+    row.holiday_auto=holiday_auto
+    db.add(row)
+
 def schedule_settings_payload(db:Session,academy_id:int,year:int,month:int):
     key=schedule_month_key(year,month)
     recurring=schedule_setting_row(db,academy_id,"recurring","")
@@ -2116,8 +2350,11 @@ def academy_schedule_payload(db:Session,academy_id:int,year:int,month:int):
     holidays=korean_holiday_payload(year,month)
     holiday_by_date={item["date"]:item for item in holidays}
     settings=schedule_settings_payload(db,academy_id,year,month)
-    active=settings["monthly"] if settings["monthly"]["configured"] else settings["recurring"]
-    weekday_source="monthly_weekday" if settings["monthly"]["configured"] else "recurring_weekday"
+    recurring=schedule_setting_row(db,academy_id,"recurring","")
+    month_key=schedule_month_key(year,month)
+    monthly=schedule_setting_row(db,academy_id,"monthly",month_key)
+    recurring_history=schedule_rule_history_rows(db,academy_id,"recurring","")
+    monthly_history=schedule_rule_history_rows(db,academy_id,"monthly",month_key)
     exceptions={item["date"]:item["is_closed"] for item in settings["exceptions"]}
     manual_closed=set()
     for item in events:
@@ -2139,6 +2376,9 @@ def academy_schedule_payload(db:Session,academy_id:int,year:int,month:int):
         if override is False:
             cursor+=timedelta(days=1)
             continue
+        active,weekday_source=schedule_effective_rule(
+            cursor,recurring,monthly,recurring_history,monthly_history
+        )
         holiday=holiday_by_date.get(key)
         weekday=(cursor.weekday()+1)%7  # API: 0=일요일 ... 6=토요일
         weekday_closed=weekday in active["weekdays"]
@@ -2148,7 +2388,7 @@ def academy_schedule_payload(db:Session,academy_id:int,year:int,month:int):
         elif holiday_closed:
             automatic.append({"date":key,"title":"휴원","source":"public_holiday"})
         elif weekday_closed:
-            automatic.append({"date":key,"title":"정기 휴원","source":weekday_source})
+            automatic.append({"date":key,"title":"휴원","source":weekday_source})
         cursor+=timedelta(days=1)
     return {
         "academy_id":academy_id,
@@ -2184,6 +2424,7 @@ def create_admin_academy_schedule(r:AcademyScheduleWrite,auth=Depends(admin_auth
 
 @app.put("/api/v3/admin/academy/schedules/{schedule_id}")
 def update_admin_academy_schedule(schedule_id:int,r:AcademyScheduleWrite,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    active_academy(db,auth["academy_id"])
     item=db.scalar(select(AcademySchedule).where(
         AcademySchedule.id==schedule_id,
         AcademySchedule.academy_id==auth["academy_id"]
@@ -2200,6 +2441,7 @@ def update_admin_academy_schedule(schedule_id:int,r:AcademyScheduleWrite,auth=De
 
 @app.delete("/api/v3/admin/academy/schedules/{schedule_id}")
 def delete_admin_academy_schedule(schedule_id:int,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    active_academy(db,auth["academy_id"])
     item=db.scalar(select(AcademySchedule).where(
         AcademySchedule.id==schedule_id,
         AcademySchedule.academy_id==auth["academy_id"]
@@ -2232,10 +2474,22 @@ def update_admin_academy_schedule_settings(r:AcademyScheduleSettingsWrite,auth=D
         today=now_kst().date()
         if requested<schedule_month_number(today) or requested>schedule_month_number(schedule_create_max_date(today)):
             raise HTTPException(400,"설정 가능한 월 범위를 벗어났습니다.")
+    today=now_kst().date()
     row=schedule_setting_row(db,auth["academy_id"],scope,year_month)
+    existed=row is not None
     if row is None:
         row=AcademyScheduleSetting(academy_id=auth["academy_id"],scope=scope,year_month=year_month)
+    elif existed:
+        ensure_schedule_rule_history_baseline(db,auth["academy_id"],scope,year_month,row)
     row.weekdays=weekdays;row.holiday_auto=r.holiday_auto;row.updated_at=now_kst().astimezone(timezone.utc)
+    if scope=="monthly":
+        year,month=[int(part) for part in year_month.split("-",1)]
+        effective_from=max(today,date(year,month,1))
+    else:
+        effective_from=today
+    upsert_schedule_rule_history(
+        db,auth["academy_id"],scope,year_month,effective_from,weekdays,bool(r.holiday_auto)
+    )
     db.add(row);db.commit()
     target_year=r.year if scope=="monthly" else now_kst().year
     target_month=r.month if scope=="monthly" else now_kst().month
@@ -2817,6 +3071,16 @@ def _academy_notice_kind(value:str):
         raise HTTPException(400,"공지 종류가 올바르지 않습니다.")
     return kind
 
+def validate_notice_period(start_date:date|None,end_date:date|None):
+    if (start_date is None)!=(end_date is None):
+        raise HTTPException(400,"공지 시작일과 종료일을 모두 입력해주세요.")
+    if start_date is not None and end_date is not None and start_date>end_date:
+        raise HTTPException(400,"공지 종료일은 시작일보다 빠를 수 없습니다.")
+
+def notice_period_active(start_date:date|None,end_date:date|None,value:date|None=None):
+    value=value or now_kst().date()
+    return (start_date is None or start_date<=value) and (end_date is None or end_date>=value)
+
 def _academy_notice_row(db:Session,academy_id:int,notice_type:str):
     return db.scalar(select(AcademyNotice).where(
         AcademyNotice.academy_id==academy_id,
@@ -2825,11 +3089,13 @@ def _academy_notice_row(db:Session,academy_id:int,notice_type:str):
 
 def _academy_notice_item(row:AcademyNotice|None,notice_type:str):
     if row is None:
-        return {"type":notice_type,"content":"","is_active":False,"updated_at":None}
+        return {"type":notice_type,"content":"","is_active":False,"start_date":None,"end_date":None,"updated_at":None}
     return {
         "type":row.notice_type,
         "content":row.content,
         "is_active":bool(row.is_active),
+        "start_date":row.start_date.isoformat() if row.start_date else None,
+        "end_date":row.end_date.isoformat() if row.end_date else None,
         "updated_at":to_kst(row.updated_at).isoformat() if row.updated_at else None,
     }
 
@@ -2847,6 +3113,65 @@ def _academy_notice_state(db:Session,academy_id:int):
         "emergency":_academy_notice_item(rows.get("emergency"),"emergency"),
         "templates":[{"slot":t.slot,"content":t.content} for t in templates],
     }
+
+def _academy_admin_notice_row(db:Session,academy_id:int,notice_type:str):
+    return db.scalar(select(AcademyAdminNotice).where(
+        AcademyAdminNotice.academy_id==academy_id,
+        AcademyAdminNotice.notice_type==notice_type
+    ))
+
+def _academy_admin_notice_item(row:AcademyAdminNotice|None,notice_type:str):
+    if row is None:
+        return {"type":notice_type,"content":"","is_active":False,"updated_at":None}
+    return {
+        "type":row.notice_type,
+        "content":row.content,
+        "is_active":bool(row.is_active),
+        "updated_at":to_kst(row.updated_at).isoformat() if row.updated_at else None,
+    }
+
+def _academy_admin_notice_state(db:Session,academy:Academy):
+    rows={n.notice_type:n for n in db.scalars(select(AcademyAdminNotice).where(
+        AcademyAdminNotice.academy_id==academy.id
+    )).all()}
+    return {
+        "academy_id":academy.id,
+        "academy_name":academy.name,
+        "regular":_academy_admin_notice_item(rows.get("regular"),"regular"),
+        "emergency":_academy_admin_notice_item(rows.get("emergency"),"emergency"),
+    }
+
+@app.get("/api/v3/admin/notices")
+def merged_admin_notices(auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    academy=active_academy(db,auth["academy_id"])
+    result=[]
+    academy_rows=db.scalars(select(AcademyAdminNotice).where(
+        AcademyAdminNotice.academy_id==academy.id,
+        AcademyAdminNotice.is_active.is_(True)
+    )).all()
+    for row in academy_rows:
+        if row.notice_type not in {"regular","emergency"} or not row.content.strip():
+            continue
+        result.append({
+            "source":"academy","academy_id":academy.id,"type":row.notice_type,
+            "content":row.content,"is_active":True,
+            "updated_at":to_kst(row.updated_at).isoformat() if row.updated_at else None,
+        })
+    global_rows=db.scalars(select(Notice).where(Notice.is_active.is_(True))).all()
+    for row in global_rows:
+        if row.notice_type not in {"regular","emergency"} or not row.content.strip():
+            continue
+        result.append({
+            "source":"global","academy_id":None,"type":row.notice_type,
+            "content":row.content,"is_active":True,
+            "updated_at":to_kst(row.updated_at).isoformat() if row.updated_at else None,
+        })
+    result.sort(key=lambda item:(
+        0 if item["type"]=="emergency" else 1,
+        0 if item["source"]=="academy" else 1,
+        item["updated_at"] or ""
+    ))
+    return result
 
 def _academy_parent_push_tokens(db:Session,academy_id:int):
     rows=db.scalars(
@@ -2867,24 +3192,36 @@ def _academy_parent_push_tokens(db:Session,academy_id:int):
 
 @app.get("/api/v3/admin/parent-notices")
 def admin_parent_notices(auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    active_academy(db,auth["academy_id"])
     return _academy_notice_state(db,auth["academy_id"])
 
 @app.post("/api/v3/admin/parent-notices")
 def save_admin_parent_notice(r:AcademyParentNoticeSaveReq,background_tasks:BackgroundTasks,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     academy_id=auth["academy_id"]
+    academy=active_academy(db,academy_id)
     kind=_academy_notice_kind(r.notice_type)
+    validate_notice_period(r.start_date,r.end_date)
     content=r.content.strip()
     if r.is_active and not content:
         raise HTTPException(400,"활성화할 공지 내용을 입력해주세요.")
     row=_academy_notice_row(db,academy_id,kind)
     previous_content=row.content if row else ""
     previous_active=bool(row.is_active) if row else False
+    previous_start=row.start_date if row else None
+    previous_end=row.end_date if row else None
+    previous_effective=previous_active and bool(previous_content.strip()) and notice_period_active(previous_start,previous_end)
     if row is None:
         row=AcademyNotice(academy_id=academy_id,notice_type=kind)
-    changed=(previous_content!=content) or (previous_active!=bool(r.is_active))
-    should_notify=bool(r.is_active) and bool(content) and ((not previous_active) or previous_content!=content)
+    changed=(
+        previous_content!=content or previous_active!=bool(r.is_active) or
+        previous_start!=r.start_date or previous_end!=r.end_date
+    )
+    effective_now=bool(r.is_active) and bool(content) and notice_period_active(r.start_date,r.end_date)
+    should_notify=effective_now and (not previous_effective or previous_content!=content)
     row.content=content
     row.is_active=bool(r.is_active)
+    row.start_date=r.start_date
+    row.end_date=r.end_date
     if changed:
         row.updated_at=now_kst().astimezone(timezone.utc)
     db.add(row)
@@ -2892,7 +3229,6 @@ def save_admin_parent_notice(r:AcademyParentNoticeSaveReq,background_tasks:Backg
     db.refresh(row)
     notified=0
     if should_notify:
-        academy=db.get(Academy,academy_id)
         tokens=_academy_parent_push_tokens(db,academy_id)
         notified=len(tokens)
         if academy and tokens:
@@ -2911,12 +3247,15 @@ def save_admin_parent_notice(r:AcademyParentNoticeSaveReq,background_tasks:Backg
 @app.post("/api/v3/admin/parent-notices/{notice_type}/clear")
 def clear_admin_parent_notice(notice_type:str,auth=Depends(admin_auth),db:Session=Depends(get_db)):
     academy_id=auth["academy_id"]
+    active_academy(db,academy_id)
     kind=_academy_notice_kind(notice_type)
     row=_academy_notice_row(db,academy_id,kind)
     if row is None:
         row=AcademyNotice(academy_id=academy_id,notice_type=kind)
     row.content=""
     row.is_active=False
+    row.start_date=None
+    row.end_date=None
     row.updated_at=now_kst().astimezone(timezone.utc)
     db.add(row)
     db.commit()
@@ -2924,6 +3263,7 @@ def clear_admin_parent_notice(notice_type:str,auth=Depends(admin_auth),db:Sessio
 
 @app.post("/api/v3/admin/parent-notice-templates")
 def save_admin_parent_notice_template(r:AcademyNoticeTemplateSaveReq,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    active_academy(db,auth["academy_id"])
     if r.slot not in {1,2,3}:
         raise HTTPException(400,"자주 쓰는 문구는 1~3번까지만 저장할 수 있습니다.")
     content=r.content.strip()
@@ -2943,6 +3283,7 @@ def save_admin_parent_notice_template(r:AcademyNoticeTemplateSaveReq,auth=Depend
 
 @app.delete("/api/v3/admin/parent-notice-templates/{slot}")
 def delete_admin_parent_notice_template(slot:int,auth=Depends(admin_auth),db:Session=Depends(get_db)):
+    active_academy(db,auth["academy_id"])
     if slot not in {1,2,3}:
         raise HTTPException(400,"자주 쓰는 문구 번호가 올바르지 않습니다.")
     row=db.scalar(select(AcademyNoticeTemplate).where(
@@ -2956,6 +3297,7 @@ def delete_admin_parent_notice_template(slot:int,auth=Depends(admin_auth),db:Ses
 
 @app.get("/api/v3/parent/notices")
 def parent_academy_notices(auth=Depends(parent_auth),db:Session=Depends(get_db)):
+    today=now_kst().date()
     academy_ids=select(ParentLink.academy_id).join(
         StudentAcademy,and_(
             StudentAcademy.student_id==ParentLink.student_id,
@@ -2971,6 +3313,8 @@ def parent_academy_notices(auth=Depends(parent_auth),db:Session=Depends(get_db))
         .where(
             AcademyNotice.academy_id.in_(academy_ids),
             AcademyNotice.is_active.is_(True),
+            or_(AcademyNotice.start_date.is_(None),AcademyNotice.start_date<=today),
+            or_(AcademyNotice.end_date.is_(None),AcademyNotice.end_date>=today),
             Academy.is_active.is_(True)
         )
     ).all()
@@ -3240,3 +3584,42 @@ def manage_notice(r:NoticeWrite,db:Session=Depends(get_db)):
     read_token(r.management_token,"academy_management",600)
     if r.notice_type not in {"regular","emergency"}: raise HTTPException(400,"공지 종류가 올바르지 않습니다.")
     n=db.get(Notice,r.notice_type) or Notice(notice_type=r.notice_type); n.content=r.content.strip(); n.is_active=r.is_active; n.updated_at=now_kst().astimezone(timezone.utc); db.add(n); db.commit(); return {"ok":True}
+
+@app.get("/api/v3/academy-management/admin-notices")
+def manage_academy_admin_notice_state(management_token:str,academy_id:int,db:Session=Depends(get_db)):
+    read_token(management_token,"academy_management",600)
+    academy=db.get(Academy,academy_id)
+    if not academy:
+        raise HTTPException(404,"학원을 찾을 수 없습니다.")
+    return _academy_admin_notice_state(db,academy)
+
+@app.post("/api/v3/academy-management/admin-notices")
+def save_manage_academy_admin_notice(r:AcademyAdminNoticeWrite,db:Session=Depends(get_db)):
+    read_token(r.management_token,"academy_management",600)
+    academy=db.get(Academy,r.academy_id)
+    if not academy:
+        raise HTTPException(404,"학원을 찾을 수 없습니다.")
+    kind=_academy_notice_kind(r.notice_type)
+    content=r.content.strip()
+    if r.is_active and not content:
+        raise HTTPException(400,"활성화할 공지 내용을 입력해주세요.")
+    row=_academy_admin_notice_row(db,academy.id,kind)
+    if row is None:
+        row=AcademyAdminNotice(academy_id=academy.id,notice_type=kind)
+    row.content=content
+    row.is_active=bool(r.is_active)
+    row.updated_at=now_kst().astimezone(timezone.utc)
+    db.add(row);db.commit();db.refresh(row)
+    return {"ok":True,"academy_id":academy.id,**_academy_admin_notice_item(row,kind)}
+
+@app.delete("/api/v3/academy-management/admin-notices/{notice_type}")
+def delete_manage_academy_admin_notice(notice_type:str,management_token:str,academy_id:int,db:Session=Depends(get_db)):
+    read_token(management_token,"academy_management",600)
+    academy=db.get(Academy,academy_id)
+    if not academy:
+        raise HTTPException(404,"학원을 찾을 수 없습니다.")
+    kind=_academy_notice_kind(notice_type)
+    row=_academy_admin_notice_row(db,academy.id,kind)
+    if row:
+        db.delete(row);db.commit()
+    return {"ok":True}
