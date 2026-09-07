@@ -1,5 +1,5 @@
-from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, BigInteger, String, Text, UniqueConstraint, Index
+from datetime import date, datetime, timezone
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, BigInteger, String, Text, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column
 from db import Base
 
@@ -36,3 +36,43 @@ class AcademyNotice(Base):
 class AcademyNoticeTemplate(Base):
     __tablename__="academy_notice_templates"; __table_args__=(UniqueConstraint("academy_id","slot",name="uq_academy_notice_template_slot"),)
     id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True); academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True); slot:Mapped[int]=mapped_column(Integer,nullable=False); content:Mapped[str]=mapped_column(Text,default="",nullable=False); updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+
+class AcademySchedule(Base):
+    __tablename__="academy_schedules"
+    __table_args__=(
+        Index("ix_academy_schedule_range","academy_id","start_date","end_date"),
+    )
+    id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True)
+    academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True)
+    kind:Mapped[str]=mapped_column(String(20),nullable=False)
+    start_date:Mapped[date]=mapped_column(Date,nullable=False)
+    end_date:Mapped[date]=mapped_column(Date,nullable=False)
+    title:Mapped[str]=mapped_column(String(160),default="",nullable=False)
+    content:Mapped[str]=mapped_column(Text,default="",nullable=False)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+
+class AcademyScheduleSetting(Base):
+    __tablename__="academy_schedule_settings"
+    __table_args__=(
+        UniqueConstraint("academy_id","scope","year_month",name="uq_academy_schedule_setting"),
+    )
+    id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True)
+    academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True)
+    scope:Mapped[str]=mapped_column(String(20),nullable=False)
+    year_month:Mapped[str]=mapped_column(String(7),default="",nullable=False)
+    weekdays:Mapped[str]=mapped_column(String(20),default="",nullable=False)
+    holiday_auto:Mapped[bool]=mapped_column(Boolean,default=False,nullable=False)
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
+
+class AcademyScheduleException(Base):
+    __tablename__="academy_schedule_exceptions"
+    __table_args__=(
+        UniqueConstraint("academy_id","date",name="uq_academy_schedule_exception"),
+        Index("ix_academy_schedule_exception_date","academy_id","date"),
+    )
+    id:Mapped[int]=mapped_column(BigInteger,primary_key=True,autoincrement=True)
+    academy_id:Mapped[int]=mapped_column(ForeignKey("academies.id",ondelete="CASCADE"),nullable=False,index=True)
+    date:Mapped[date]=mapped_column(Date,nullable=False)
+    is_closed:Mapped[bool]=mapped_column(Boolean,nullable=False)
+    updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow,nullable=False)
