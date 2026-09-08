@@ -373,8 +373,10 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:11px 9px
 .small{font-size:13px;color:var(--muted)}.section-title{font-size:18px;font-weight:800;margin:0 0 14px}
 .att-calendar{margin-top:16px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}.att-week,.att-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.att-week div{padding:9px 4px;text-align:center;font-size:12px;font-weight:700;color:var(--muted);background:#fafbff;border-bottom:1px solid var(--line)}.att-day{min-height:72px;padding:7px;border:0;border-right:1px solid #f0f1f5;border-bottom:1px solid #f0f1f5;border-radius:0;background:#fff;color:var(--text);text-align:left}.att-day.empty{background:#fafafa;cursor:default}.att-day.selected{background:#eef2ff;box-shadow:inset 0 0 0 2px var(--blue)}.att-day.today .att-num{color:var(--blue);font-weight:900}.att-num{font-weight:700}.att-count{display:block;margin-top:7px;font-size:11px;color:var(--blue);font-weight:700}.att-selected-title{font-size:15px;font-weight:800;margin:16px 0 8px}
 .schedule-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px}.schedule-head{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:10px}.schedule-head strong{min-width:120px;text-align:center}.schedule-calendar{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}.schedule-week,.schedule-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr))}.schedule-week div{padding:9px 4px;text-align:center;font-size:12px;font-weight:700;color:var(--muted);background:#fafbff;border-bottom:1px solid var(--line)}.schedule-week div:first-child{color:#d32f2f}.schedule-week div:last-child{color:#245bd8}.schedule-day{min-height:96px;padding:7px;border:0;border-right:1px solid #f0f1f5;border-bottom:1px solid #f0f1f5;border-radius:0;background:#fff;color:var(--text);text-align:left;overflow:visible}.schedule-day.empty{background:#fafafa;cursor:default}.schedule-day.today{box-shadow:inset 0 0 0 2px var(--blue)}.schedule-day.sunday .schedule-num,.schedule-day.holiday .schedule-num{color:#d32f2f}.schedule-day.saturday .schedule-num{color:#245bd8}.schedule-day.closed .schedule-num{color:#d32f2f}.schedule-num{font-weight:800}.schedule-holiday{display:block;color:#d32f2f;font-size:10px;font-weight:700;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.schedule-item{display:block;margin-top:3px;padding:2px 4px;border-radius:5px;background:#eef2ff;color:#3658ca;font-size:10px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.schedule-item.closure{background:#fff0f0;color:#c62828}.schedule-range{position:relative;z-index:2;display:block;height:17px;line-height:17px;margin:3px -7px 0;padding-left:4px;background:#eef2ff;color:#3658ca;font-size:10px;font-weight:700;white-space:nowrap;overflow:visible}.schedule-range.closure,.schedule-range.holiday-range{background:#fff0f0;color:#c62828}.schedule-range.start{margin-left:0;border-radius:5px 0 0 5px}.schedule-range.end{margin-right:0;border-radius:0 5px 5px 0}.schedule-range.start.end{border-radius:5px;margin-left:0;margin-right:0}.schedule-detail-row{border-top:1px solid var(--line);padding:12px 0}.schedule-detail-row:first-child{border-top:0}.weekday-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}.weekday-grid label{display:flex;align-items:center;gap:7px}.weekday-grid input{width:auto}
+.schedule-days{position:relative;isolation:isolate}.schedule-day{position:relative;z-index:1;min-height:calc(96px + var(--schedule-range-tracks,0)*20px);padding-bottom:calc(7px + var(--schedule-range-tracks,0)*20px)}.schedule-day.holiday .schedule-num{color:#d32f2f}.schedule-event-range{z-index:4;align-self:end;height:17px;line-height:17px;margin:0 0 calc(5px + var(--schedule-range-track,0)*20px);padding:0 5px;border-radius:5px;background:#eef2ff;color:#3658ca;font-size:10px;font-weight:700;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}.schedule-event-range.closure,.schedule-event-range.holiday-range{background:#fff0f0;color:#c62828}
 .attendance-live-popup{position:fixed;top:76px;left:50%;transform:translateX(-50%);z-index:120;width:min(620px,calc(100% - 32px));background:#fff;border:2px solid var(--blue);border-radius:26px;box-shadow:0 18px 60px rgba(17,24,39,.28);padding:28px 30px;text-align:center}.attendance-live-name{font-size:34px;font-weight:900;line-height:1.25}.attendance-live-action{font-size:24px;font-weight:800;color:var(--blue);margin-top:8px}.attendance-live-time{font-size:14px;color:var(--muted);margin-top:8px}.attendance-live-close{margin-top:18px;min-width:120px}
 @media(max-width:720px){.grid,.grid3{grid-template-columns:1fr}.between{align-items:flex-start;flex-direction:column}.tablewrap{overflow:auto}.att-day{min-height:60px;padding:5px}.att-count{font-size:10px}.schedule-day{min-height:76px;padding:5px}.schedule-range{margin-left:-5px;margin-right:-5px}.weekday-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:720px){.schedule-day{min-height:calc(76px + var(--schedule-range-tracks,0)*20px);padding-bottom:calc(5px + var(--schedule-range-tracks,0)*20px)}}
 </style>
 </head>
 <body>
@@ -1580,6 +1582,48 @@ function scheduleRangeSegment(label,kind,isStart,isEnd){
   const classes=["schedule-range",kind];if(isStart)classes.push("start");if(isEnd)classes.push("end");
   return `<span class="${classes.join(" ")}">${isStart?esc(label):""}</span>`;
 }
+function scheduleNextDate(key){const value=new Date(key+"T00:00:00Z");value.setUTCDate(value.getUTCDate()+1);return value.toISOString().slice(0,10)}
+function scheduleEventRangeLayout(events,holidays,automaticClosures,startDay,monthFirst,monthLast){
+  const ranges=[],groupedAutomaticDates={};let order=0;
+  for(const item of (events||[])){
+    if(item.start_date===item.end_date)continue;
+    ranges.push({start:item.start_date,end:item.end_date,label:item.kind==="closure"?"휴원":(item.title||""),kind:item.kind,priority:2,order:order++});
+  }
+  const autoByDate={};(automaticClosures||[]).forEach(item=>autoByDate[item.date]=item);
+  const holidayGroups={};
+  for(const holiday of (holidays||[])){
+    if(!holiday.group_id)continue;
+    const group=holidayGroups[holiday.group_id]||(holidayGroups[holiday.group_id]={start:holiday.group_start,end:holiday.group_end,label:holiday.group_name||holiday.name,dates:[]});
+    group.dates.push(holiday.date);
+  }
+  for(const group of Object.values(holidayGroups)){
+    ranges.push({start:group.start,end:group.end,label:group.label,kind:"holiday-range",priority:0,order:order++});
+    const dates=[...new Set(group.dates)].filter(key=>autoByDate[key]&&autoByDate[key].source==="public_holiday").sort();let run=[];
+    const finishRun=()=>{
+      if(run.length>0){ranges.push({start:run[0],end:run[run.length-1],label:"휴원",kind:"closure",priority:1,order:order++});run.forEach(key=>groupedAutomaticDates[key]=true)}
+      run=[];
+    };
+    for(const key of dates){if(run.length&&scheduleNextDate(run[run.length-1])!==key)finishRun();run.push(key)}finishRun();
+  }
+  const segments=[];
+  for(const range of ranges){
+    if(range.end<monthFirst||range.start>monthLast)continue;
+    const clippedStart=range.start<monthFirst?monthFirst:range.start,clippedEnd=range.end>monthLast?monthLast:range.end;
+    let day=Number(clippedStart.slice(8,10)),endDay=Number(clippedEnd.slice(8,10));
+    while(day<=endDay){
+      const absolute=startDay+day-1,week=Math.floor(absolute/7),column=absolute%7+1,span=Math.min(endDay-day+1,8-column);
+      segments.push({week:week,column:column,span:span,label:range.label,kind:range.kind,priority:range.priority,order:range.order,track:0});day+=span;
+    }
+  }
+  segments.sort((a,b)=>a.week-b.week||a.column-b.column||a.priority-b.priority||a.order-b.order);
+  const trackEndsByWeek={},tracksByWeek={};
+  for(const segment of segments){
+    const ends=trackEndsByWeek[segment.week]||(trackEndsByWeek[segment.week]=[]);let track=0;
+    while(track<ends.length&&segment.column<=ends[track])track++;
+    ends[track]=segment.column+segment.span-1;segment.track=track;tracksByWeek[segment.week]=ends.length;
+  }
+  return {segments:segments,tracksByWeek:tracksByWeek,groupedAutomaticDates:groupedAutomaticDates};
+}
 function renderAcademySchedule(){
   if(!academyScheduleData)return;
   $("scheduleMonthTitle").textContent=`${scheduleYear}년 ${scheduleMonth}월`;
@@ -1587,33 +1631,26 @@ function renderAcademySchedule(){
   const monthFirst=`${y}-${String(m).padStart(2,"0")}-01`,monthLast=`${y}-${String(m).padStart(2,"0")}-${String(days).padStart(2,"0")}`;
   const holidaysByDate={};(academyScheduleData.holidays||[]).forEach(item=>holidaysByDate[item.date]=item);
   const autoByDate={};(academyScheduleData.automatic_closures||[]).forEach(item=>autoByDate[item.date]=item);
-  let cells="";for(let i=0;i<startDay;i++)cells+='<button class="schedule-day empty" disabled></button>';
+  const rangeLayout=scheduleEventRangeLayout(academyScheduleData.events,academyScheduleData.holidays,academyScheduleData.automatic_closures,startDay,monthFirst,monthLast),rangeTracks=rangeLayout.tracksByWeek;
+  let cells="";for(let i=0;i<startDay;i++){const week=Math.floor(i/7),column=i%7+1;cells+=`<button class="schedule-day empty" style="grid-column:${column};grid-row:${week+1};--schedule-range-tracks:${rangeTracks[week]||0}" disabled></button>`}
   for(let day=1;day<=days;day++){
     const key=`${y}-${String(m).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-    const weekday=new Date(y,m-1,day).getDay(),holiday=holidaysByDate[key];
+    const weekday=new Date(y,m-1,day).getDay(),cell=startDay+day-1,week=Math.floor(cell/7),column=cell%7+1,holiday=holidaysByDate[key];
     const closed=!!autoByDate[key]||(academyScheduleData.events||[]).some(item=>item.kind==="closure"&&item.start_date<=key&&item.end_date>=key);
     const classes=["schedule-day"];if(weekday===0)classes.push("sunday");if(weekday===6)classes.push("saturday");if(holiday)classes.push("holiday");if(closed)classes.push("closed");if(key===academyScheduleData.today)classes.push("today");
     let content=`<span class="schedule-num">${day}</span>`;
     if(holiday&&!holiday.group_id)content+=`<span class="schedule-holiday">${esc(holiday.name)}</span>`;
-    if(holiday&&holiday.group_id){
-      const clippedStart=holiday.group_start<monthFirst?monthFirst:holiday.group_start,clippedEnd=holiday.group_end>monthLast?monthLast:holiday.group_end;
-      const rangeStart=key===clippedStart||weekday===0,rangeEnd=key===clippedEnd||weekday===6;
-      content+=scheduleRangeSegment(holiday.group_name,"holiday-range",rangeStart,rangeEnd);
-    }
     for(const item of (academyScheduleData.events||[])){
       if(key<item.start_date||key>item.end_date)continue;
       const label=item.kind==="closure"?"휴원":item.title;
-      if(item.kind==="closure"||item.start_date===item.end_date)content+=`<span class="schedule-item ${item.kind}">${esc(label)}</span>`;
-      else{
-        const clippedStart=item.start_date<monthFirst?monthFirst:item.start_date,clippedEnd=item.end_date>monthLast?monthLast:item.end_date;
-        content+=scheduleRangeSegment(label,item.kind,key===clippedStart||weekday===0,key===clippedEnd||weekday===6);
-      }
+      if(item.start_date===item.end_date)content+=`<span class="schedule-item ${item.kind}">${esc(label)}</span>`;
     }
-    if(autoByDate[key])content+='<span class="schedule-item closure">휴원</span>';
-    cells+=`<button class="${classes.join(" ")}" onclick="openScheduleDay('${key}')">${content}</button>`;
+    if(autoByDate[key]&&!rangeLayout.groupedAutomaticDates[key])content+='<span class="schedule-item closure">휴원</span>';
+    cells+=`<button class="${classes.join(" ")}" style="grid-column:${column};grid-row:${week+1};--schedule-range-tracks:${rangeTracks[week]||0}" onclick="openScheduleDay('${key}')">${content}</button>`;
   }
-  const used=startDay+days,tail=(7-used%7)%7;for(let i=0;i<tail;i++)cells+='<button class="schedule-day empty" disabled></button>';
-  $("academyScheduleCalendar").innerHTML='<div class="schedule-week"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div><div class="schedule-days">'+cells+'</div>';
+  const used=startDay+days,tail=(7-used%7)%7;for(let i=0;i<tail;i++){const cell=used+i,week=Math.floor(cell/7),column=cell%7+1;cells+=`<button class="schedule-day empty" style="grid-column:${column};grid-row:${week+1};--schedule-range-tracks:${rangeTracks[week]||0}" disabled></button>`}
+  const rangeBars=rangeLayout.segments.map(segment=>`<span class="schedule-event-range ${segment.kind}" style="grid-column:${segment.column} / span ${segment.span};grid-row:${segment.week+1};--schedule-range-track:${segment.track}">${esc(segment.label)}</span>`).join("");
+  $("academyScheduleCalendar").innerHTML='<div class="schedule-week"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div><div class="schedule-days">'+cells+rangeBars+'</div>';
 }
 function openScheduleDay(key){
   if(!academyScheduleData)return;selectedScheduleDate=key;
@@ -2278,14 +2315,14 @@ def schedule_settings_payload(db:Session,academy_id:int,year:int,month:int):
     }
 
 def korean_holiday_payload(year:int,month:int):
-    raw=[(holiday_date,str(name)) for holiday_date,name in holiday_lib.KR(years=[year],language="ko").items() if holiday_date.month==month]
-    raw.sort(key=lambda item:item[0])
+    all_raw=[(holiday_date,str(name)) for holiday_date,name in holiday_lib.KR(years=[year],language="ko").items()]
+    all_raw.sort(key=lambda item:item[0])
     groups={}
     for key,names,group_name in (
         ("seollal",{"설날 전날","설날","설날 다음날"},"설날 연휴"),
         ("chuseok",{"추석 전날","추석","추석 다음날"},"추석 연휴"),
     ):
-        dates=[holiday_date for holiday_date,name in raw if name in names]
+        dates=[holiday_date for holiday_date,name in all_raw if name in names]
         if dates:
             group={
                 "group_id":f"{key}-{year}",
@@ -2295,6 +2332,7 @@ def korean_holiday_payload(year:int,month:int):
             }
             for holiday_date in dates:
                 groups[holiday_date]=group
+    raw=[item for item in all_raw if item[0].month==month]
     result=[]
     for holiday_date,name in raw:
         group=groups.get(holiday_date,{})
